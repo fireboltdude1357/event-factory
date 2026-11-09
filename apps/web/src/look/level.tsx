@@ -104,11 +104,11 @@ export function LevelScreen({ level, onExit, onOpen }: { readonly level: LevelCo
 /** The parts tray: one press-down tile per part, then the eraser and rotate. */
 function Tray({ level }: { readonly level: LevelController }) {
   const { tool } = level
-  // Tiles take their label's width and give it back when the tray is crowded, so the last tools stay in view.
+  // A crowded tray wraps on a phone. On a wide screen its tiles shrink first, and it scrolls only if they still do not fit.
   const tile = "relative flex h-[5.2rem] min-w-[3.5rem] max-w-[6.5rem] shrink flex-col items-center self-center px-1 pb-1 pt-1.5"
   const tone = (active: boolean) => (active ? "bg-[#ffd60a] text-ink" : "bg-panel text-ink")
   return (
-    <div className="toy-plastic flex min-w-0 flex-wrap items-stretch gap-x-1.5 gap-y-2.5 bg-[#3d5a80] p-2 pb-3 lg:flex-1 lg:flex-nowrap" style={{ borderRadius: 16 }} role="group" aria-label="Parts">
+    <div className="toy-plastic flex min-w-0 flex-wrap items-stretch gap-x-1.5 gap-y-2.5 bg-[#3d5a80] p-2 pb-3 lg:flex-1 lg:flex-nowrap lg:overflow-x-auto" style={{ borderRadius: 16 }} role="group" aria-label="Parts">
       {level.palette.map((item) => (
         <button key={item.id} type="button" aria-pressed={tool?.id === item.id} disabled={item.remaining === 0} onClick={() => level.pickTool(item.id)} className={`${key} ${tile} ${tone(tool?.id === item.id)}`} title={item.title}>
           {item.key !== null && <kbd className="absolute left-1 top-0.5 font-mono text-[0.65rem] font-bold text-faint">{item.key}</kbd>}

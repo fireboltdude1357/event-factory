@@ -244,12 +244,15 @@ export function Board({
 function ghostOf(level: LevelController, frame: RenderFrame, at: Point | null): Ghost | null {
   const { tool, toolLook } = level
   if (!tool || !at || level.outcome) return null
-  const belt = frame.belts.some((b) => samePoint(b.at, at) && !b.locked)
+  const belt = frame.belts.find((b) => samePoint(b.at, at))
   const building = frame.buildings.find((b) => samePoint(b.at, at))
   const wall = frame.terrain[at.y * frame.width + at.x] === "wall"
-  if (tool.id === eraser) return { at, facing: tool.facing, ok: belt || (building !== undefined && !building.locked), what: { kind: "erase" } }
-  if (tool.id === "belt") return { at, facing: tool.facing, ok: !wall && !building, what: { kind: "belt" } }
-  return toolLook && { at, facing: tool.facing, ok: !wall && !building, what: { kind: "building", look: toolLook } }
+  const free = !wall && !building
+  if (tool.id === eraser) return { at, facing: tool.facing, ok: (belt !== undefined && !belt.locked) || (building !== undefined && !building.locked), what: { kind: "erase" } }
+  // The same rules the level applies: a locked belt cannot be re-aimed, and a building replaces only an empty belt of the player's.
+  if (tool.id === "belt") return { at, facing: tool.facing, ok: free && (belt === undefined || !belt.locked || belt.facing === tool.facing), what: { kind: "belt" } }
+  const replaceable = belt === undefined || (!belt.locked && !frame.parcels.some((p) => samePoint(p.at, at)))
+  return toolLook && { at, facing: tool.facing, ok: free && replaceable, what: { kind: "building", look: toolLook } }
 }
 
 /**

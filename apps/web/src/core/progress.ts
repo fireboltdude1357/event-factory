@@ -34,8 +34,9 @@ function read(pack: Pack): Progress {
 
 /** Records a win. Returns true when it beat the stored best, or was the first. */
 export function recordWin(pack: Pack, scenario: Scenario, ticks: number): boolean {
-  // Read storage again, not the cache: another tab may have saved wins since this one loaded.
-  const before = load(pack)
+  // Storage may hold wins another tab saved since this one loaded, and the cache may hold wins storage refused to keep.
+  const before = new Map(load(pack))
+  for (const [id, best] of read(pack)) before.set(id, Math.min(best, before.get(id) ?? best))
   const prior = before.get(scenario.id)
   const beat = prior === undefined || ticks < prior
   const next = beat ? new Map(before).set(scenario.id, ticks) : before
