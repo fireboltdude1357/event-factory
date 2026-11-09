@@ -78,7 +78,8 @@ const WhereSchema: Schema.Codec<WhereSource> = Schema.Union([
 
 const OutSideSchema = Schema.Literals(["front", "left", "right"]);
 const DisposalSchema = Schema.Union([Schema.Literal("drop"), Schema.Struct({ route: Schema.String })]);
-const kindBase = { title: Schema.String, doc: Schema.String, glyph: Schema.optionalKey(Schema.String) };
+const ColorSchema = Schema.TemplateLiteral(["#", Schema.String]);
+const kindBase = { title: Schema.String, doc: Schema.String, glyph: Schema.optionalKey(Schema.String), color: Schema.optionalKey(ColorSchema) };
 
 const SourceSchema = Schema.Struct({
   ...kindBase,
@@ -160,6 +161,7 @@ const ScenarioSchema = Schema.Struct({
   id: Schema.String,
   title: Schema.String,
   brief: Schema.String,
+  debrief: Schema.optionalKey(Schema.String),
   seed: Schema.Number,
   maxTicks: Schema.Number,
   map: Schema.Array(Schema.String),
@@ -364,7 +366,7 @@ function resolveKinds(decl: PackSource, events: ReadonlyMap<EventTypeId, EventTy
     if (name === "belt") report(path, `"belt" is reserved for the belt`);
     if (name === "any" || name === "anyExternal") report(path, `"${name}" is reserved, because an omitted \`kind\` or \`at\` means every kind`);
     if (!kindNamePattern.test(name)) report(path, `kind "${name}" must match ${kindNamePattern}`);
-    const base = { id: KindId(name), title: k.title, doc: k.doc, glyph: k.glyph ?? (k.title.charAt(0) || name.charAt(0)) };
+    const base = { id: KindId(name), title: k.title, doc: k.doc, glyph: k.glyph ?? (k.title.charAt(0) || name.charAt(0)), color: k.color ?? null };
 
     switch (k.archetype) {
       case "source": {
@@ -418,7 +420,7 @@ function resolveKinds(decl: PackSource, events: ReadonlyMap<EventTypeId, EventTy
 type MachineSource = Extract<PackSource["catalog"]["kinds"][string], { readonly archetype: "machine" }>;
 
 function resolveMachine(
-  base: Pick<MachineKind, "id" | "title" | "doc" | "glyph">,
+  base: Pick<MachineKind, "id" | "title" | "doc" | "glyph" | "color">,
   k: MachineSource,
   path: string,
   events: ReadonlyMap<EventTypeId, EventType>,
@@ -660,6 +662,7 @@ function resolveScenario(
     id: ScenarioId(s.id),
     title: s.title,
     brief: s.brief,
+    debrief: s.debrief ?? null,
     seed: s.seed,
     maxTicks: s.maxTicks,
     width,

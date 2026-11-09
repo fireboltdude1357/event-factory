@@ -202,6 +202,8 @@ export default definePack({
       id: "hello-event",
       title: "Your first event",
       brief: "The storefront publishes `OrderPlaced`. The ledger only books `PaymentCaptured`. Put a PaymentService between them.",
+      debrief:
+        "A consumer reacts to one event and publishes another. `PaymentService` turned every `OrderPlaced` into a `PaymentCaptured`, and the ledger never had to know the storefront exists.",
       seed: 1,
       maxTicks: 400,
       map: [
@@ -228,6 +230,8 @@ export default definePack({
       id: "queue-or-topic",
       title: "Two teams, one order",
       brief: "Payments and fulfillment both need every order. A queue gives each order to one consumer. A topic gives it to all of them.",
+      debrief:
+        "A topic gives every subscriber its own copy, so two teams can each see every order. A queue would have split the orders between them.",
       seed: 2,
       maxTicks: 600,
       map: [
@@ -287,6 +291,8 @@ export default definePack({
       id: "route-by-region",
       title: "Ship from the right continent",
       brief: "The shop now sells in the EU. EU orders must ship from the EU warehouse and US orders from the US one. Route on the order's `region` field.",
+      debrief:
+        "A router reads a field on the event and picks an output. A queue could not do this, because it hands work to whichever consumer is free.",
       seed: 5,
       maxTicks: 600,
       map: [
@@ -338,6 +344,8 @@ export default definePack({
       id: "when-payments-fail",
       title: "When payments fail",
       brief: "The card processor times out now and then, and two orders are over the card limit. Lose nothing, and keep the DLQ to the orders that really cannot be charged.",
+      debrief:
+        "Retries cover the failures that pass. A dead-letter queue takes the ones that never will, so the line keeps moving. The ledger's idempotency key made the repeated charges harmless.",
       seed: 3,
       maxTicks: 900,
       map: [

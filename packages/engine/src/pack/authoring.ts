@@ -89,6 +89,8 @@ interface KindBase {
   readonly doc: string;
   /** One character drawn on the building. */
   readonly glyph?: string;
+  /** Accent color for the building. Omit it and the game colors the building by what it does. */
+  readonly color?: `#${string}`;
 }
 
 type EventName<Es extends EventDecls> = keyof Es & string;
@@ -325,6 +327,8 @@ export interface ScenarioDecl<C> {
   readonly title: string;
   /** Markdown shown before the level starts. */
   readonly brief: string;
+  /** Markdown shown when the level is won: the lesson in one or two sentences. */
+  readonly debrief?: string;
   /** An integer from 0 to 2^32 - 1. Changing it changes the level's luck. */
   readonly seed: number;
   readonly maxTicks: number;

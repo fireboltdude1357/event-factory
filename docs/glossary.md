@@ -16,4 +16,7 @@
 - **Settled.** Every finite source has emitted its count and no parcel is left on a belt or in a building. A level is won only when settled with every goal met, or at `maxTicks` with every goal met.
 - **Counterexample.** A layout that must lose, with the lesson it proves. `pack:check` always adds the bare map.
 - **Telemetry.** The single ordered stream of facts about a run. Metrics, goals, hints, the HUD and traces all read it.
+- **Debrief.** A scenario's optional lesson, shown when the level is won.
+- **Reference time.** The ticks the scenario's reference solution takes. The game shows it beside the player's time.
+- **Shape.** What a kind does, one step finer than its archetype: producer, queue, topic, handler, router, external system or dead-letter queue. Derived from the kind, never declared. The map draws a building from it.
 - **Stalled.** A building that has work it cannot hand off, usually because its out side is full or has nothing linked.

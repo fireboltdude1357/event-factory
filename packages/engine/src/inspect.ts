@@ -32,19 +32,34 @@ export interface Inspection {
   readonly trace: Trace | null;
 }
 
-/** Derived, never declared, so the label always matches what the kind does. */
-export function roleOf(kind: Kind): string {
+/** What a kind does, one step finer than its archetype. The map draws a building from this. */
+export type BuildingShape = "producer" | "queue" | "topic" | "handler" | "router" | "external" | "deadLetter";
+
+/** Derived, never declared, so the shape always matches what the kind does. */
+export function shapeOf(kind: Kind): BuildingShape {
   switch (kind.archetype) {
     case "source":
-      return "Producer";
+      return "producer";
     case "broker":
-      return kind.delivery === "competing" ? "Queue" : "Topic";
+      return kind.delivery === "competing" ? "queue" : "topic";
     case "machine":
-      return kind.recipes.length > 0 && kind.recipes.every((r) => r.ticks === 0 && r.emit.every((e) => e.kind === "forward")) ? "Router" : "Handler";
+      return kind.recipes.length > 0 && kind.recipes.every((r) => r.ticks === 0 && r.emit.every((e) => e.kind === "forward")) ? "router" : "handler";
     case "sink":
-      return kind.role.kind === "deadLetter" ? "Dead-letter queue" : "External system";
+      return kind.role.kind === "deadLetter" ? "deadLetter" : "external";
   }
 }
+
+const roleNames: Readonly<Record<BuildingShape, string>> = {
+  producer: "Producer",
+  queue: "Queue",
+  topic: "Topic",
+  handler: "Handler",
+  router: "Router",
+  external: "External system",
+  deadLetter: "Dead-letter queue",
+};
+
+export const roleOf = (kind: Kind): string => roleNames[shapeOf(kind)];
 
 /** A probability in whole percent that never rounds a possible outcome to 0% or a possible miss to 100%. */
 function percent(p: number): string {

@@ -158,3 +158,56 @@ describe("a finished run", () => {
     session.dispose();
   });
 });
+
+describe("rewind", () => {
+  it("returns to tick 0 with the player's layout, so the same layout plays to the same outcome", () => {
+    const session = createSession(pack, ScenarioId("when-payments-fail"));
+    session.loadSolution();
+    // The player's own edits: one belt turned, one extra belt.
+    session.dispatch({ kind: "rotate", at: { x: 8, y: 1 }, to: "east" });
+    session.dispatch({ kind: "place", at: { x: 0, y: 3 }, facing: "north", build: { kind: "belt" } });
+    const layout = (f = session.frame()) => ({ buildings: f.buildings.map((b) => [b.kind, b.at, b.facing]), belts: f.belts.map((b) => [b.at, b.facing]) });
+    const built = layout();
+    const firstRun = session.frame().run;
+
+    while (session.getSnapshot().status.kind === "running") session.step();
+    const first = session.getSnapshot();
+    session.rewind();
+
+    expect(session.frame().tick).toBe(0);
+    expect(session.frame().run).toBeGreaterThan(firstRun);
+    expect(session.getSnapshot().status.kind).toBe("running");
+    expect(layout()).toEqual(built);
+
+    while (session.getSnapshot().status.kind === "running") session.step();
+    expect(session.getSnapshot().status).toEqual(first.status);
+    expect(session.getSnapshot().metrics).toEqual(first.metrics);
+    session.dispose();
+  });
+});
+
+describe("the render frame", () => {
+  it("reports each building's shape, outputs, job progress and retry wait", () => {
+    const session = createSession(pack, ScenarioId("when-payments-fail"));
+    session.loadSolution();
+    const payments = () => session.frame().buildings.find((b) => b.glyph === "$");
+    expect(payments()).toMatchObject({ shape: "handler", outs: [{ facing: "east", port: "out" }, { facing: "south", port: "dlq" }], work: null, retry: null });
+    expect(session.frame().buildings.map((b) => b.shape).sort()).toEqual(["deadLetter", "external", "handler", "producer"]);
+
+    let worked = false;
+    let waited = false;
+    while (session.getSnapshot().status.kind === "running") {
+      session.step();
+      const b = payments();
+      if (b?.work != null && b.work > 0 && b.work <= 1) worked = true;
+      if (b?.retry != null) {
+        expect(b.retry.attempt).toBeGreaterThan(1);
+        expect(b.retry.of).toBe(4);
+        waited = true;
+      }
+    }
+    expect(worked).toBe(true);
+    expect(waited).toBe(true);
+    session.dispose();
+  });
+});
