@@ -19,7 +19,9 @@ The engine is a deterministic, headless factory simulation. A pack describes a c
 | `packages/engine/src/sim/objectives.ts` | `Metrics`, `observe` and `evaluate`. |
 | `packages/engine/src/sim/sim.ts` | `createSim`, `step`, `runScenario`, `trace`, and telemetry formatting. |
 | `packages/engine/src/inspect.ts` | Docs, live facts and derived role names for anything the player clicks. |
-| `packages/engine/src/session.ts` | The browser seam: clock, snapshot, render frame, listeners. |
+| `packages/engine/src/session.ts` | The browser seam: clock, snapshot, render frame, listeners, and `rewind`, which returns to tick 0 with the layout as it stands. |
+| `apps/web/src/core/` | The game with no look: the level controller (`level.ts`), the canvas host (`board.tsx`), belt joins and parcel paths (`geometry.ts`), timed effects (`fx.ts`), sound, progress and text. |
+| `apps/web/src/look/` | How the game looks: the canvas painter (`paint.ts` and the modules it draws with) and the level and level-list screens. It reads the core and draws. Replacing this folder restyles the game without touching a rule. |
 | `packages/cli/src/` | `pack:check`. |
 | `packs/order-processing/pack.ts` | The example pack. |
 
@@ -35,6 +37,12 @@ The package `exports` map exposes only `.` and `./author`, so engine internals c
 4. `objectiveProgress`, `hint` and `finished` records are appended to the history.
 
 Commands (`place`, `remove`, `rotate`) apply between ticks. Each re-derives the topology. Removing a tile or building drops what it held with reason `removed`. A finished run rejects every command with reason `finished`, because its outcome is final.
+
+## What the map draws
+
+`session.frame()` is the only thing a painter reads. Besides positions it reports what each building is doing: its `shape` (derived from the kind by `shapeOf`), its out sides, how far its current job is (`work`), a retry wait with the attempt number (`retry`) and a broker's buffer (`fill`). `time` is the tick plus the share of the next one already elapsed, so belt and job animation hold still while the clock is paused. Every flash carries an id that is unique within a run, and the app starts one short effect per id. Nothing on screen is scripted: an effect exists because a telemetry record does.
+
+The canvas repaints only while the clock plays, an effect is still running, or something changed. The verify drive checks this by counting paints.
 
 ## Determinism
 
