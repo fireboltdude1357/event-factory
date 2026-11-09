@@ -113,12 +113,8 @@ function barrier(ctx: CanvasRenderingContext2D, c: number, facing: Facing) {
 
 const eventShapes = 5
 
-/** Events of one type share a silhouette as well as a color, so color is never the only cue. */
-export function shapeIndex(type: string): number {
-  let h = 0
-  for (let i = 0; i < type.length; i++) h = (h * 31 + type.charCodeAt(i)) >>> 0
-  return h % eventShapes
-}
+/** Events of one type share a silhouette as well as a color, so color is never the only cue. The pack's first five types each get their own. */
+export const shapeIndex = (typeIndex: number): number => typeIndex % eventShapes
 
 function tokenPath(ctx: CanvasRenderingContext2D, x: number, y: number, r: number, shape: number) {
   ctx.beginPath()

@@ -133,7 +133,7 @@ export function createParcelTracker() {
     const next = new Map<number, { readonly cell: number; readonly from: Facing | null }>()
     const out = frame.parcels.map((parcel): MovingParcel => {
       const v = vectors[parcel.facing]
-      const tile = { x: Math.floor(parcel.x - v.x * 1e-6), y: Math.floor(parcel.y - v.y * 1e-6) }
+      const tile = parcel.at
       const cell = tile.y * frame.width + tile.x
       const before = entered.get(parcel.id)
       let from = before?.cell === cell ? before.from : null

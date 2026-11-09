@@ -31,6 +31,9 @@ const desktop = { width: 1280, height: 800 }
 const phone = { width: 390, height: 844 }
 const errors = []
 const results = []
+// Only the contexts this drive opened are closed at the end: a shared browser may hold someone else's.
+const opened = []
+let current = null
 const record = (step, ok, detail) => {
   results.push({ step, ok, detail })
   console.log(`${ok ? "pass" : "FAIL"} ${step}: ${detail}`)
@@ -44,7 +47,9 @@ async function open(viewport, name) {
     deviceScaleFactor: viewport === phone ? 2 : 1,
     recordVideo: { dir: join(args.out, "video", name), size: viewport },
   })
+  opened.push(context)
   const page = await context.newPage()
+  current = { page, name }
   page.on("pageerror", (e) => errors.push(`${name}: ${e}`))
   page.on("console", (m) => m.type() === "error" && errors.push(`${name}: ${m.text()}`))
   return { context, page, shot: (file) => page.screenshot({ path: join(args.out, `${file}.png`) }) }
@@ -247,7 +252,8 @@ async function inspectFlow() {
 // A running map repaints every frame. A paused one must stop once its last effect ends.
 async function idleFlow() {
   const { context, page } = await open(desktop, "idle")
-  await openLevel(page, 1)
+  // The first level, so this flow runs on a pack with only one.
+  await openLevel(page, 0)
   await button(page, "Show solution").click()
   await button(page, "Play").click()
   await page.waitForTimeout(1500)
@@ -304,12 +310,13 @@ for (const [name, run] of Object.entries(flows)) {
   try {
     await run()
   } catch (error) {
+    await current?.page.screenshot({ path: join(args.out, `${name}-error.png`) }).catch(() => {})
     record(name, false, String(error).split("\n")[0])
   }
 }
 record("console", errors.length === 0, errors.length === 0 ? "no page errors" : errors.join(" | "))
 
-for (const context of browser.contexts()) await context.close().catch(() => {})
+for (const context of opened) await context.close().catch(() => {})
 await browser.close()
 writeFileSync(join(args.out, "results.json"), JSON.stringify({ results, errors }, null, 2))
 process.exit(results.every((r) => r.ok) ? 0 : 1)

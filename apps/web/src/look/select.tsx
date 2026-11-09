@@ -9,8 +9,8 @@ import { paint } from "./paint"
 /** The level list as a shelf of model kits: each level a boxed kit showing its starting board. */
 export function LevelSelect({ pack, onOpen }: { readonly pack: Pack; readonly onOpen: (scenarioId: string) => void }) {
   const progress = useProgress(pack)
-  const done = pack.scenarios.filter((s) => progress[s.id]).length
-  const nextUp = pack.scenarios.find((s) => !progress[s.id])
+  const done = pack.scenarios.filter((s) => progress.has(s.id)).length
+  const nextUp = pack.scenarios.find((s) => !progress.has(s.id))
   return (
     <div className="toy-bench min-h-dvh font-sans text-ink">
       <main className="mx-auto max-w-5xl px-4 pb-16 pt-8 sm:pt-12">
@@ -24,7 +24,7 @@ export function LevelSelect({ pack, onOpen }: { readonly pack: Pack; readonly on
                 <li
                   key={s.id}
                   className="h-6 w-9 rounded-md border-[2.5px] border-ink"
-                  style={{ background: progress[s.id] ? (confettiColors[i % confettiColors.length] ?? "#2ec36b") : "var(--color-raised)", boxShadow: progress[s.id] ? "0 3px 0 var(--color-ink)" : "none" }}
+                  style={{ background: progress.has(s.id) ? (confettiColors[i % confettiColors.length] ?? "#2ec36b") : "var(--color-raised)", boxShadow: progress.has(s.id) ? "0 3px 0 var(--color-ink)" : "none" }}
                 />
               ))}
             </ol>
@@ -36,7 +36,7 @@ export function LevelSelect({ pack, onOpen }: { readonly pack: Pack; readonly on
 
         <ol className="mt-8 grid gap-6 sm:grid-cols-2">
           {pack.scenarios.map((s, i) => {
-            const best = progress[s.id]?.best
+            const best = progress.get(s.id)
             const par = parOf(pack, s)
             const upNext = s === nextUp
             const color = confettiColors[i % confettiColors.length] ?? "#3a86ff"

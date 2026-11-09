@@ -64,7 +64,7 @@ export interface RenderFrame {
     /** A broker's fullest buffer as a share of its capacity, 0 to 1. Null for everything else. */
     readonly fill: number | null;
   }[];
-  readonly belts: readonly { readonly entity: EntityId; readonly at: Point; readonly facing: Facing }[];
+  readonly belts: readonly { readonly entity: EntityId; readonly at: Point; readonly facing: Facing; readonly locked: boolean }[];
   /**
    * Position in tile units, already interpolated between tiles: tile (x, y)
    * spans [x, x+1) by [y, y+1), so its center is (x + 0.5, y + 0.5).
@@ -72,11 +72,15 @@ export interface RenderFrame {
   readonly parcels: readonly {
     /** The parcel's own id, stable while it moves. Fanout copies of one event differ here. */
     readonly id: number;
+    /** The belt tile it is on. `x` and `y` alone cannot say which tile a parcel on a shared edge belongs to. */
+    readonly at: Point;
     readonly x: number;
     readonly y: number;
     readonly facing: Facing;
     readonly event: EventId;
     readonly type: EventTypeId;
+    /** The type's position in the pack's event list, so a renderer can give each type its own silhouette. */
+    readonly typeIndex: number;
     readonly color: string;
     readonly duplicate: boolean;
   }[];
@@ -192,6 +196,7 @@ export function createSession(pack: Pack, scenarioId: ScenarioId, options: Sessi
   const scenario = pack.scenarios.find((s) => s.id === scenarioId);
   if (scenario === undefined) throw new Error(`unknown scenario ${scenarioId}`);
   const ticksPerSecond = options.ticksPerSecond ?? 10;
+  const typeOrder = new Map([...pack.events.keys()].map((id, i) => [id, i]));
   const frames = options.frames ?? animationFrames;
 
   let sim: Sim = createSim(pack, scenario);
@@ -351,7 +356,7 @@ export function createSession(pack: Pack, scenarioId: ScenarioId, options: Sessi
       const belts: RenderFrame["belts"][number][] = [];
       for (const placed of sim.layout.placements.values()) {
         if (placed.build.kind === "belt") {
-          belts.push({ entity: placed.entity, at: placed.at, facing: placed.facing });
+          belts.push({ entity: placed.entity, at: placed.at, facing: placed.facing, locked: placed.locked });
           continue;
         }
         const kind = pack.kinds.get(placed.build.id);
@@ -393,11 +398,13 @@ export function createSession(pack: Pack, scenarioId: ScenarioId, options: Sessi
         const event = sim.log.get(slot.parcel.event);
         parcels.push({
           id: slot.parcel.id,
+          at: p,
           x: p.x + 0.5 + dx * along,
           y: p.y + 0.5 + dy * along,
           facing: placed.facing,
           event: event.id,
           type: event.type,
+          typeIndex: typeOrder.get(event.type) ?? 0,
           color: pack.events.get(event.type)?.color ?? "#888888",
           duplicate: sim.duplicates.has(slot.parcel.id),
         });

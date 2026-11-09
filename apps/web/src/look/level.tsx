@@ -1,9 +1,9 @@
-import type { GoalProgress } from "@event-factory/engine"
+import type { EventId, GoalProgress } from "@event-factory/engine"
 import { useEffect, useRef, useState, type ReactNode, type RefObject } from "react"
 import { Board, type Insets } from "../core/board"
 import { Icon } from "../core/icon"
 import { Inspector } from "../core/inspector"
-import { speeds, type LevelController, type Outcome } from "../core/level"
+import { eraser, speeds, type LevelController, type Outcome } from "../core/level"
 import { useEventLog, type LogLine } from "../core/log"
 import { Markdown } from "../core/markdown"
 import { setMuted, useMuted } from "../core/sound"
@@ -104,10 +104,11 @@ export function LevelScreen({ level, onExit, onOpen }: { readonly level: LevelCo
 /** The parts tray: one press-down tile per part, then the eraser and rotate. */
 function Tray({ level }: { readonly level: LevelController }) {
   const { tool } = level
-  const tile = "relative flex h-[5.2rem] min-w-[4rem] max-w-[6.5rem] shrink-0 flex-col items-center self-center px-1.5 pb-1 pt-1.5 sm:min-w-[4.4rem]"
+  // Tiles take their label's width and give it back when the tray is crowded, so the last tools stay in view.
+  const tile = "relative flex h-[5.2rem] min-w-[3.5rem] max-w-[6.5rem] shrink flex-col items-center self-center px-1 pb-1 pt-1.5"
   const tone = (active: boolean) => (active ? "bg-[#ffd60a] text-ink" : "bg-panel text-ink")
   return (
-    <div className="toy-plastic flex min-w-0 items-stretch gap-1.5 overflow-x-auto bg-[#3d5a80] p-2 pb-3 lg:flex-1" style={{ borderRadius: 16 }} aria-label="Parts">
+    <div className="toy-plastic flex min-w-0 flex-wrap items-stretch gap-x-1.5 gap-y-2.5 bg-[#3d5a80] p-2 pb-3 lg:flex-1 lg:flex-nowrap" style={{ borderRadius: 16 }} role="group" aria-label="Parts">
       {level.palette.map((item) => (
         <button key={item.id} type="button" aria-pressed={tool?.id === item.id} disabled={item.remaining === 0} onClick={() => level.pickTool(item.id)} className={`${key} ${tile} ${tone(tool?.id === item.id)}`} title={item.title}>
           {item.key !== null && <kbd className="absolute left-1 top-0.5 font-mono text-[0.65rem] font-bold text-faint">{item.key}</kbd>}
@@ -117,16 +118,16 @@ function Tray({ level }: { readonly level: LevelController }) {
             </span>
           )}
           <Icon draw={paintIcon} what={item.look ?? "belt"} size={42} />
-          <span className="mt-0.5 line-clamp-2 text-center text-[0.68rem] font-semibold leading-[1.1] [overflow-wrap:break-word] sm:text-[0.72rem]">{item.title}</span>
+          <span className="mt-0.5 line-clamp-2 max-w-full text-center text-[0.68rem] font-semibold leading-[1.1] [overflow-wrap:anywhere] sm:text-[0.72rem]">{item.title}</span>
         </button>
       ))}
-      <span className="mx-0.5 w-1 shrink-0 self-stretch rounded-full bg-black/25" />
-      <button type="button" aria-pressed={tool?.id === "erase"} onClick={() => level.pickTool("erase")} className={`${key} ${tile} ${tone(tool?.id === "erase")}`} title="Remove (X)">
+      <span className="mx-0.5 hidden w-1 shrink-0 self-stretch rounded-full bg-black/25 lg:block" />
+      <button type="button" aria-pressed={tool?.id === eraser} onClick={() => level.pickTool(eraser)} className={`${key} ${tile} ${tone(tool?.id === eraser)}`} title="Remove (X)">
         <kbd className="absolute left-1 top-0.5 font-mono text-[0.65rem] font-bold text-faint">X</kbd>
         <Icon draw={paintIcon} what="erase" size={42} />
         <span className="mt-0.5 text-[0.7rem] font-semibold leading-tight">Remove</span>
       </button>
-      <button type="button" disabled={!tool || tool.id === "erase"} onClick={() => level.rotateTool(1)} className={`${key} ${tile} bg-panel text-ink`} title="Rotate (R)">
+      <button type="button" disabled={!tool || tool.id === eraser} onClick={() => level.rotateTool(1)} className={`${key} ${tile} bg-panel text-ink`} title="Rotate (R)">
         <kbd className="absolute left-1 top-0.5 font-mono text-[0.65rem] font-bold text-faint">R</kbd>
         <span className="grid size-[42px] place-items-center font-display text-3xl font-bold">{arrows[tool?.facing ?? "east"]}</span>
         <span className="mt-0.5 text-[0.7rem] font-semibold leading-tight">Rotate</span>
@@ -219,13 +220,27 @@ function WorkOrder({ level, onExit, onOpen, wide }: { readonly level: LevelContr
           ))}
         </ul>
 
-        <div role="tablist" aria-label="Work order pages" className="mt-4 flex gap-1 border-b-2 border-ink">
+        <div
+          role="tablist"
+          aria-label="Work order pages"
+          className="mt-4 flex gap-1 border-b-2 border-ink"
+          onKeyDown={(e) => {
+            const step = e.key === "ArrowRight" ? 1 : e.key === "ArrowLeft" ? -1 : 0
+            if (step === 0) return
+            e.preventDefault()
+            const next = pages[(pages.indexOf(page) + step + pages.length) % pages.length] ?? page
+            setPage(next)
+            e.currentTarget.querySelector<HTMLElement>(`[data-page="${next}"]`)?.focus()
+          }}
+        >
           {pages.map((p) => (
             <button
               key={p}
               type="button"
               role="tab"
+              data-page={p}
               aria-selected={page === p}
+              tabIndex={page === p ? 0 : -1}
               onClick={() => setPage(p)}
               className={`-mb-0.5 rounded-t-lg border-2 border-b-0 px-3 py-1 font-display text-sm font-semibold ${page === p ? "border-ink bg-[#fffdf6]" : "border-transparent text-dim hover:text-ink"}`}
             >
@@ -239,7 +254,13 @@ function WorkOrder({ level, onExit, onOpen, wide }: { readonly level: LevelContr
           {page === "notes" ? (
             <Notes level={level} wide={wide} />
           ) : page === "log" ? (
-            <ShiftLog lines={log} level={level} />
+            <ShiftLog
+              lines={log}
+              onOpen={(event) => {
+                level.inspect({ kind: "event", event })
+                setPage("spec")
+              }}
+            />
           ) : (
             <>
               {level.selectedEditable && (
@@ -274,7 +295,7 @@ const logTones: Record<LogLine["tone"], string> = {
 }
 
 /** What just happened on the line, newest first. Each event id opens that event's spec sheet. */
-function ShiftLog({ lines, level }: { readonly lines: readonly LogLine[]; readonly level: LevelController }) {
+function ShiftLog({ lines, onOpen }: { readonly lines: readonly LogLine[]; readonly onOpen: (event: EventId) => void }) {
   if (lines.length === 0) return <p className="text-sm text-dim">Nothing yet. Run the line and every event's story prints here.</p>
   return (
     <ol className="space-y-1">
@@ -284,7 +305,7 @@ function ShiftLog({ lines, level }: { readonly lines: readonly LogLine[]; readon
           <span>
             <span className="font-semibold">{l.who}</span> {l.verb}{" "}
             {l.event && (
-              <button type="button" onClick={() => l.event && level.inspect({ kind: "event", event: l.event.id })} className="inline-flex items-baseline gap-1 rounded-sm font-semibold text-ink underline decoration-rule underline-offset-2 hover:decoration-ink">
+              <button type="button" onClick={() => l.event && onOpen(l.event.id)} className="inline-flex items-baseline gap-1 rounded-sm font-semibold text-ink underline decoration-rule underline-offset-2 hover:decoration-ink">
                 <span className="inline-block size-2 rounded-[2px] border border-ink" style={{ background: l.event.color }} />
                 {l.event.type}
                 <span className="font-mono text-xs font-normal text-dim">#{l.event.id}</span>
@@ -429,8 +450,8 @@ function Result({ level, outcome, onExit, onOpen }: { readonly level: LevelContr
               : par === null || ticks === par
                 ? "Right on the reference time."
                 : ticks < par
-                  ? `${par - ticks} ticks faster than the reference.`
-                  : `${ticks - par} ticks behind the reference. A shorter line would close the gap.`}
+                  ? `${ticksText(par - ticks)} faster than the reference.`
+                  : `${ticksText(ticks - par)} behind the reference. A shorter line would close the gap.`}
             {outcome.newBest && <span className="ml-1.5 inline-block -rotate-2 rounded-md border-2 border-ink bg-[#ffd60a] px-1.5 font-display text-xs font-bold uppercase">New best</span>}
           </p>
           {outcome.debrief && (
@@ -484,6 +505,8 @@ function Result({ level, outcome, onExit, onOpen }: { readonly level: LevelContr
     </div>
   )
 }
+
+const ticksText = (n: number) => `${n} ${n === 1 ? "tick" : "ticks"}`
 
 /** Your time and the reference time as two bars on the same scale. */
 function Ticks({ ticks, par }: { readonly ticks: number; readonly par: number | null }) {

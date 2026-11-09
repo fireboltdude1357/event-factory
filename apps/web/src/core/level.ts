@@ -1,11 +1,13 @@
 import {
   createSession,
+  outSides,
   shapeOf,
   type BuildingShape,
   type Command,
   type InspectTarget,
   type Inspection,
   type KindId,
+  type OutSide,
   type Pack,
   type Scenario,
   type Session,
@@ -19,7 +21,10 @@ import { parOf, recordWin } from "./progress"
 import { play } from "./sound"
 import { lossText, rejectText } from "./text"
 
-export type ToolId = KindId | "belt" | "erase"
+/** The remove tool. A kind name starts with a letter, so no pack kind can be called this. */
+export const eraser = "#erase"
+
+export type ToolId = KindId | "belt" | typeof eraser
 
 export interface Tool {
   readonly id: ToolId
@@ -31,6 +36,8 @@ export interface Look {
   readonly shape: BuildingShape
   readonly glyph: string
   readonly color: string | null
+  /** The sides it sends from, relative to its facing. */
+  readonly sides: readonly OutSide[]
 }
 
 export interface PaletteItem {
@@ -132,8 +139,8 @@ function useSnapshot(session: Session): SessionSnapshot {
 }
 
 const lookOf = (pack: Pack, id: ToolId): Look | null => {
-  const kind = id === "belt" || id === "erase" ? undefined : pack.kinds.get(id)
-  return kind ? { shape: shapeOf(kind), glyph: kind.glyph, color: kind.color } : null
+  const kind = id === "belt" || id === eraser ? undefined : pack.kinds.get(id)
+  return kind ? { shape: shapeOf(kind), glyph: kind.glyph, color: kind.color, sides: outSides(kind) } : null
 }
 
 /**
@@ -191,7 +198,7 @@ export function useLevel(pack: Pack, scenario: Scenario, session: Session): Leve
     (at: Point) => {
       const frame = session.frame()
       const belt = frame.belts.find((b) => samePoint(b.at, at))
-      if (belt) return { kind: "belt" as const, facing: belt.facing, locked: false }
+      if (belt) return { kind: "belt" as const, facing: belt.facing, locked: belt.locked, busy: frame.parcels.some((p) => samePoint(p.at, at)) }
       const building = frame.buildings.find((b) => samePoint(b.at, at))
       return building ? { kind: "building" as const, facing: building.facing, locked: building.locked } : null
     },
@@ -202,19 +209,19 @@ export function useLevel(pack: Pack, scenario: Scenario, session: Session): Leve
     use: (at, facing, quiet) => {
       if (tool === null) return false
       const here = occupant(at)
-      if (tool.id === "erase") return here !== null && run({ kind: "remove", at }, quiet)
+      if (tool.id === eraser) return here !== null && run({ kind: "remove", at }, quiet)
       if (tool.id === "belt") {
         // Drawing a belt over a belt re-aims it, so a run can be redrawn without erasing first.
         if (here?.kind === "belt") return here.facing === facing || run({ kind: "rotate", at, to: facing }, true)
         return run({ kind: "place", at, facing, build: { kind: "belt" } }, quiet)
       }
       const build = { kind: "building" as const, id: tool.id }
-      if (here?.kind !== "belt") return run({ kind: "place", at, facing, build }, quiet)
-      // A building dropped on a belt replaces it. If the engine refuses the building, the belt goes back.
-      session.dispatch({ kind: "remove", at })
-      if (run({ kind: "place", at, facing, build }, quiet)) return true
-      session.dispatch({ kind: "place", at, facing: here.facing, build: { kind: "belt" } })
-      return false
+      // A building dropped on a belt replaces it, but only when that is safe: the belt is the player's and
+      // empty (removing it would drop what it carries) and the part is still in stock. Otherwise the engine
+      // says why the cell is taken.
+      const spare = session.getSnapshot().palette.find((p) => p.id === tool.id)?.remaining !== 0
+      if (here?.kind === "belt" && !here.locked && !here.busy && spare) session.dispatch({ kind: "remove", at })
+      return run({ kind: "place", at, facing, build }, quiet)
     },
     rotate: (at, to) => void run({ kind: "rotate", at, to }, true),
     remove: (at) => void run({ kind: "remove", at }),
@@ -231,7 +238,7 @@ export function useLevel(pack: Pack, scenario: Scenario, session: Session): Leve
       play("pick")
       return { id, facing: current?.facing ?? "east" }
     })
-    if (id !== null && id !== "erase") setSubject(id === "belt" ? { kind: "belt" } : { kind: "target", target: { kind: "kind", id } })
+    if (id !== null && id !== eraser) setSubject(id === "belt" ? { kind: "belt" } : { kind: "target", target: { kind: "kind", id } })
     setSelected(null)
   }, [])
 
@@ -310,7 +317,7 @@ export function useLevel(pack: Pack, scenario: Scenario, session: Session): Leve
         if (item && item.remaining !== 0) pickTool(item.id)
         return
       }
-      if (e.key.toLowerCase() === "x") return pickTool("erase")
+      if (e.key.toLowerCase() === "x") return pickTool(eraser)
       if (e.key.toLowerCase() !== "r") return
       const by = e.shiftKey ? -1 : 1
       if (tool) return rotateTool(by)

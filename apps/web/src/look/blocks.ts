@@ -114,7 +114,10 @@ const blockSize = 0.74
 const depthOf = (c: number) => Math.max(2, Math.round(c * 0.11))
 
 /** The plastic body every building shares plus the motif that says what it does. Also the palette icon and the ghost. */
-export function block(ctx: CanvasRenderingContext2D, c: number, look: Look, state: Building["state"], live: Live | null) {
+/** What a block is drawn from. A placed building and a palette entry both have it. */
+type Face = Pick<Look, "shape" | "glyph" | "color">
+
+export function block(ctx: CanvasRenderingContext2D, c: number, look: Face, state: Building["state"], live: Live | null) {
   const s = c * blockSize
   const d = depthOf(c)
   const lw = Math.max(1.5, c * 0.038)
@@ -149,7 +152,7 @@ export function block(ctx: CanvasRenderingContext2D, c: number, look: Look, stat
   ctx.restore()
 }
 
-function motif(ctx: CanvasRenderingContext2D, c: number, s: number, look: Look, color: string, live: Live | null) {
+function motif(ctx: CanvasRenderingContext2D, c: number, s: number, look: Face, color: string, live: Live | null) {
   const lw = Math.max(1, c * 0.025)
   let stickerY = 0
   switch (look.shape) {
@@ -464,8 +467,10 @@ function label(ctx: CanvasRenderingContext2D, x: number, y: number, text: string
   ctx.font = `600 ${size}px ${display}`
   ctx.textAlign = "center"
   ctx.textBaseline = "middle"
+  // By code point, so a cut never splits an emoji or an accented letter in half.
+  const chars = [...text]
   let shown = text
-  while (shown.length > 3 && ctx.measureText(shown).width > max) shown = `${shown.slice(0, -2).trimEnd()}…`
+  for (let keep = chars.length - 1; keep >= 3 && ctx.measureText(shown).width > max; keep--) shown = `${chars.slice(0, keep).join("").trimEnd()}…`
   const w = ctx.measureText(shown).width + size * 0.9
   const h = size * 1.5
   ctx.fillStyle = shadow

@@ -4,10 +4,10 @@
 // `@event-factory/engine/src/sim/movement` fails to resolve from outside.
 
 export { loadPack, PackInvalid, type PackIssue } from "./pack/load.js";
-export type { Pack, Scenario, Kind, EventType, Facing, Point } from "./pack/model.js";
+export type { Pack, Scenario, Kind, EventType, Facing, OutSide, Point } from "./pack/model.js";
 
 export { createSim, runScenario, type Sim, type SimView, type RunReport, type Trace } from "./sim/sim.js";
-export { CommandRejected, type Command, type RejectReason } from "./sim/world.js";
+export { CommandRejected, outSides, sideDirection, type Command, type RejectReason } from "./sim/world.js";
 export { telemetryTags, type Telemetry, type TelemetryTag, type TelemetryOf, type Outcome } from "./sim/telemetry.js";
 export type { Metrics, Status, GoalProgress } from "./sim/objectives.js";
 

@@ -63,7 +63,7 @@ events: {
 - `doc` is Markdown the player reads in the inspector. Write it in your company's words. The game is documentation.
 - `key` names the fields that identify the business operation. The idempotency key is the type, `:`, and the JSON of the value, such as `OrderPlaced:"ord-14"`. With several fields it is the JSON array of their values, such as `Transfer:["acct-1","op-7"]`. JSON keeps a value such as `ord-14/Billing.0.0` from spelling a key derived from causation. Declare it on any event an idempotent sink receives, so a retry that re-creates the event dedupes the way your real system does. Without `key`, the engine derives one from causation: the root event's source kind, stream and count, plus `/Kind.recipe.emit` for each machine step, such as `Storefront#0.3/PaymentService.0.0`. Two kinds that handle the same event produce different keys. Two buildings of one kind on two fanout branches produce the same key, because they perform the same operation.
 - `version` (default 1) is stamped on new events. A source payload can override it to mix versions.
-- `color` is optional. The loader picks one from a palette. The game also gives each event type its own silhouette, so two types never differ by color alone.
+- `color` is optional and is a hex color, `"#f97316"` or `"#f93"`. The loader picks one from a palette when it is missing. The game also gives each event type a silhouette by its position in `events`, so the first five types never differ by color alone.
 
 ## Kinds
 

@@ -1,3 +1,4 @@
+import { sideDirection } from "@event-factory/engine"
 import type { Scene } from "../core/board"
 import { easeOut, easeOutBack, scatter, type Fx, type FxKind } from "../core/fx"
 import { angles, vectors } from "../core/geometry"
@@ -314,7 +315,8 @@ export function cursor(ctx: CanvasRenderingContext2D, scene: Scene) {
     arrowHead(ctx, v.x * c * 0.08, v.y * c * 0.08, angles[ghost.facing], c * 0.13, white)
   } else {
     ctx.globalAlpha = ghost.ok ? 0.8 : 0.45
-    tab(ctx, c, ghost.facing, toyColor(ghost.what.look), true)
+    // Every output it will have once placed, so a second port is not a surprise.
+    for (const side of ghost.what.look.sides) tab(ctx, c, sideDirection(ghost.facing, side), toyColor(ghost.what.look), true)
     block(ctx, c, ghost.what.look, "idle", null)
   }
   ctx.restore()

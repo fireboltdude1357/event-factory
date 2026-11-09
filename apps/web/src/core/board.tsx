@@ -2,7 +2,7 @@ import type { RenderFrame } from "@event-factory/engine"
 import { useEffect, useRef, type PointerEvent } from "react"
 import type { Fx } from "./fx"
 import { createParcelTracker, facingBetween, linksOf, samePoint, stepsBetween, type Facing, type Links, type MovingParcel, type Point } from "./geometry"
-import type { LevelController, Look } from "./level"
+import { eraser, type LevelController, type Look } from "./level"
 
 /** What the active tool would do at the hovered cell. */
 export interface Ghost {
@@ -44,7 +44,8 @@ export interface Insets {
 }
 
 const noInsets: Insets = { top: 0, right: 0, bottom: 0, left: 0 }
-const minCell = 14
+// Small enough that a wide map shrinks to fit a phone instead of running off both edges.
+const minCell = 4
 
 /**
  * The map. It fills its container and draws on animation frames outside React,
@@ -190,7 +191,7 @@ export function Board({
     if (e.button !== 0) return
     if (!tool) return actions.inspect(at)
     const changed = actions.use(at, tool.facing, false)
-    if (tool.id === "belt" || tool.id === "erase") {
+    if (tool.id === "belt" || tool.id === eraser) {
       drag.current = { last: at, facing: tool.facing, changedLast: changed }
       e.currentTarget.setPointerCapture(e.pointerId)
     }
@@ -203,7 +204,7 @@ export function Board({
     if (!run || !at || samePoint(at, run.last)) return
     const { tool, actions } = latest.current.level
     for (const next of stepsBetween(run.last, at)) {
-      if (tool?.id === "erase") {
+      if (tool?.id === eraser) {
         actions.use(next, run.facing, true)
         run.last = next
         continue
@@ -243,10 +244,10 @@ export function Board({
 function ghostOf(level: LevelController, frame: RenderFrame, at: Point | null): Ghost | null {
   const { tool, toolLook } = level
   if (!tool || !at || level.outcome) return null
-  const belt = frame.belts.some((b) => samePoint(b.at, at))
+  const belt = frame.belts.some((b) => samePoint(b.at, at) && !b.locked)
   const building = frame.buildings.find((b) => samePoint(b.at, at))
   const wall = frame.terrain[at.y * frame.width + at.x] === "wall"
-  if (tool.id === "erase") return { at, facing: tool.facing, ok: belt || (building !== undefined && !building.locked), what: { kind: "erase" } }
+  if (tool.id === eraser) return { at, facing: tool.facing, ok: belt || (building !== undefined && !building.locked), what: { kind: "erase" } }
   if (tool.id === "belt") return { at, facing: tool.facing, ok: !wall && !building, what: { kind: "belt" } }
   return toolLook && { at, facing: tool.facing, ok: !wall && !building, what: { kind: "building", look: toolLook } }
 }

@@ -193,11 +193,20 @@ describe("the render frame", () => {
     const payments = () => session.frame().buildings.find((b) => b.glyph === "$");
     expect(payments()).toMatchObject({ shape: "handler", outs: [{ facing: "east", port: "out" }, { facing: "south", port: "dlq" }], work: null, retry: null });
     expect(session.frame().buildings.map((b) => b.shape).sort()).toEqual(["deadLetter", "external", "handler", "producer"]);
+    expect(session.frame().belts.every((b) => !b.locked)).toBe(true);
 
     let worked = false;
     let waited = false;
+    const typeIndexes = new Set<number>();
     while (session.getSnapshot().status.kind === "running") {
       session.step();
+      for (const p of session.frame().parcels) {
+        // A parcel's tile is the belt it is on, even when it sits exactly on that belt's edge.
+        expect(session.frame().belts.some((belt) => belt.at.x === p.at.x && belt.at.y === p.at.y)).toBe(true);
+        expect(Math.abs(p.x - (p.at.x + 0.5))).toBeLessThanOrEqual(0.5);
+        expect(Math.abs(p.y - (p.at.y + 0.5))).toBeLessThanOrEqual(0.5);
+        typeIndexes.add(p.typeIndex);
+      }
       const b = payments();
       if (b?.work != null && b.work > 0 && b.work <= 1) worked = true;
       if (b?.retry != null) {
@@ -208,6 +217,8 @@ describe("the render frame", () => {
     }
     expect(worked).toBe(true);
     expect(waited).toBe(true);
+    // OrderPlaced is the pack's first event type and PaymentCaptured its second.
+    expect([...typeIndexes].sort()).toEqual([0, 1]);
     session.dispose();
   });
 });

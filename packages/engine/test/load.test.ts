@@ -149,6 +149,20 @@ describe("loadPack", () => {
     expect(paths).toContain("catalog.kinds.Billing.0.0/Shipping");
   });
 
+  it("rejects a color the canvas could not draw, and takes short and long hex", () => {
+    const withColors = (event: string, kind: string) =>
+      issuesOf({
+        ...broken,
+        catalog: {
+          ...broken.catalog,
+          events: { ...broken.catalog.events, A: { ...broken.catalog.events.A, color: event } },
+          kinds: { ...broken.catalog.kinds, Out: { ...broken.catalog.kinds.Out, color: kind } },
+        },
+      }).filter((i) => i.path.endsWith(".color"));
+    expect(withColors("#f93", "#F97316")).toEqual([]);
+    expect(withColors("#orange", "#12345678").map((i) => i.path)).toEqual(["catalog.events.A.color", "catalog.kinds.Out.color"]);
+  });
+
   it("rejects a pack with no scenarios", () => {
     expect(issuesOf({ ...broken, scenarios: [] })).toContainEqual({ path: "scenarios", message: "needs at least one scenario" });
   });

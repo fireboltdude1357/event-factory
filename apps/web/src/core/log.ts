@@ -53,8 +53,10 @@ export function useEventLog(level: LevelController): readonly LogLine[] {
       timer = null
       const records = buffer.current.slice(-cap)
       buffer.current = []
-      const names = new Map<EntityId, string>(session.frame().buildings.map((b) => [b.entity, b.title]))
-      const nameOf = (entity: EntityId) => names.get(entity) ?? "a removed building"
+      const frame = session.frame()
+      const names = new Map<EntityId, string>([...frame.belts.map((b) => [b.entity, pack.belt.title] as const), ...frame.buildings.map((b) => [b.entity, b.title] as const)])
+      // A removed belt or building is no longer in the frame, and the record does not say which it was.
+      const nameOf = (entity: EntityId) => names.get(entity) ?? "A removed part"
       const ofEvent = (event: EventId) => {
         const type = session.typeOf(event)
         return { type: type ?? "event", id: event, color: (type && pack.events.get(type)?.color) ?? "#888888" }

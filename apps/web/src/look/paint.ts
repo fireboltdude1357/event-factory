@@ -27,7 +27,7 @@ export const paint: Painter = (ctx, scene) => {
     ctx.restore()
   }
   cursor(ctx, scene)
-  for (const p of scene.parcels) crate(ctx, p.x * c, p.y * c, c, p.parcel.color, shapeIndex(p.parcel.type), p.parcel.duplicate)
+  for (const p of scene.parcels) crate(ctx, p.x * c, p.y * c, c, p.parcel.color, shapeIndex(p.parcel.typeIndex), p.parcel.duplicate)
   for (const link of scene.links.buildings) tags(ctx, link, c)
   effects(ctx, scene.fx, c)
   ctx.restore()
