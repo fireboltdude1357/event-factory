@@ -41,12 +41,11 @@ export function recordWin(pack: Pack, scenario: Scenario, ticks: number): boolea
   const beat = prior === undefined || ticks < prior
   const next = beat ? new Map(before).set(scenario.id, ticks) : before
   cache.set(pack.id, next)
-  if (beat) {
-    try {
-      localStorage.setItem(storageKey(pack), JSON.stringify(Object.fromEntries([...next].map(([id, best]) => [id, { best }]))))
-    } catch {
-      // Kept for this page only.
-    }
+  // Written on every win, not only a new best: an earlier write may have been refused, and this one may get through.
+  try {
+    localStorage.setItem(storageKey(pack), JSON.stringify(Object.fromEntries([...next].map(([id, best]) => [id, { best }]))))
+  } catch {
+    // Kept for this page only.
   }
   for (const notify of listeners) notify()
   return beat

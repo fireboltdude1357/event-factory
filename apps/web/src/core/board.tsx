@@ -252,7 +252,8 @@ function ghostOf(level: LevelController, frame: RenderFrame, at: Point | null): 
   // The same rules the level applies: a locked belt cannot be re-aimed, and a building replaces only an empty belt of the player's.
   if (tool.id === "belt") return { at, facing: tool.facing, ok: free && (belt === undefined || !belt.locked || belt.facing === tool.facing), what: { kind: "belt" } }
   const replaceable = belt === undefined || (!belt.locked && !frame.parcels.some((p) => samePoint(p.at, at)))
-  return toolLook && { at, facing: tool.facing, ok: free && replaceable, what: { kind: "building", look: toolLook } }
+  const inStock = level.palette.find((p) => p.id === tool.id)?.remaining !== 0
+  return toolLook && { at, facing: tool.facing, ok: free && replaceable && inStock, what: { kind: "building", look: toolLook } }
 }
 
 /**
