@@ -1,0 +1,12 @@
+{
+  "name": "@event-factory/cli",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@event-factory/engine": "workspace:*",
+    "effect": "4.0.6"
+  },
+  "scripts": {
+    "typecheck": "tsc -p . --noEmit"
+  }
+}

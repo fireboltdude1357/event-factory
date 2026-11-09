@@ -1,0 +1,51 @@
+@import "tailwindcss";
+
+/*
+ * Plant-HMI palette (after ISA-101): surfaces stay grey, and saturated color
+ * means state. Amber is a warning (stall, duplicate), red is an alarm, green
+ * is a met goal, and the operator's own selection is plain bright ink. The
+ * pack's event colors are the only other hues on screen.
+ * canvas.ts reads these same properties, so the grid and the chrome match.
+ */
+@theme static {
+  --color-slate: #1d2427;
+  --color-panel: #252d31;
+  --color-raised: #2f393e;
+  --color-rule: #3c484e;
+  --color-ink: #dbe2e4;
+  --color-dim: #8e9ca2;
+  --color-faint: #5d6a70;
+  --color-floor: #222a2d;
+  --color-grid: #2c3539;
+  --color-wall: #13181a;
+  --color-belt: #3a4549;
+  --color-chevron: #6b7b81;
+  --color-machine: #44535a;
+  --color-busy: #9fb7c2;
+  --color-amber: #e3a72f;
+  --color-alarm: #e2524b;
+  --color-ok: #5bb98b;
+
+  --font-sans: "Barlow", ui-sans-serif, system-ui, sans-serif;
+  --font-display: "Barlow Semi Condensed", "Barlow", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, monospace;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  background: var(--color-slate);
+  color: var(--color-ink);
+  font-family: var(--font-sans);
+  font-variant-numeric: tabular-nums;
+  -webkit-font-smoothing: antialiased;
+}
+
+:focus-visible {
+  outline: 2px solid var(--color-amber);
+  outline-offset: 2px;
+}

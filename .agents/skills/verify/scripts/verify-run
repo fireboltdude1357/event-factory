@@ -1,0 +1,662 @@
+#!/usr/bin/env python3
+"""Run bookkeeping for a project's verify skill: run IDs, the worktree lock,
+owned processes, ownership checks, cleanup and the evidence check.
+
+Vendored into each project as .agents/skills/verify/scripts/verify-run by
+/create-verify-skill. Project-specific checks (target deployment, which
+checkout is served) live in the project's own doctor script, which calls
+`verify-run doctor` first. Run with --help for commands. Only clean up runs
+you created; cleanup trusts the run ID it is given. Bump VERSION on
+every behavior change; /maintain-verify-skill compares it with the fleet copy.
+
+Ownership rule: a process belongs to a run when it is in a process group the
+run started. `spawn` makes each command a group leader and records the
+leader's PID and start time. Cleanup signals a group only after the leader's
+start time matches. Neither macOS nor Linux hands out a PID that is still in
+use as a process group ID, so the group stays ours while any member lives.
+Once the leader is gone, a group ID alone does not prove the group is the
+run's, so cleanup stops it only when a member's environment carries the
+VERIFY_RUN_ID that spawn set. One such member is enough: a group lives in a
+single session, and neither OS reuses a group or session ID while it has
+members. macOS hides the environment of Apple's own binaries (sh, sleep),
+so a group left with only those is reported, not stopped.
+"""
+from __future__ import annotations
+
+import argparse
+import fcntl
+import functools
+import json
+import os
+import re
+import secrets
+import shutil
+import signal
+import socket
+import subprocess
+import sys
+import time
+import urllib.request
+from urllib.parse import urlparse
+from contextlib import contextmanager
+from datetime import datetime
+from pathlib import Path
+
+VERSION = 11
+LOCK_ONLY_STALE_SECONDS = 12 * 3600
+STALE_LOCK_SECONDS = 15 * 60
+PS_ENV = {**os.environ, "LC_ALL": "C", "TZ": "UTC"}
+
+
+def fail(msg: str) -> None:
+    print(f"verify-run: {msg}", file=sys.stderr)
+    sys.exit(1)
+
+
+def root() -> Path:
+    out = subprocess.run(["git", "rev-parse", "--show-toplevel"], capture_output=True, text=True)
+    if out.returncode != 0:
+        fail("not inside a git checkout")
+    return Path(out.stdout.strip())
+
+
+def state_dir() -> Path:
+    d = root() / ".verify"
+    d.mkdir(exist_ok=True)
+    return d
+
+
+@contextmanager
+def mutex():
+    """Serializes every change to the lock and to run.json files."""
+    with open(state_dir() / ".mutex", "a") as f:
+        fcntl.flock(f, fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(f, fcntl.LOCK_UN)
+
+
+def run_dir(run_id: str) -> Path:
+    d = state_dir() / "runs" / run_id
+    if not (d / "run.json").is_file():
+        fail(f"unknown run {run_id} (no {d}/run.json)")
+    return d
+
+
+def load(run_id: str) -> dict:
+    return json.loads((run_dir(run_id) / "run.json").read_text())
+
+
+def save(run_id: str, data: dict) -> None:
+    path = run_dir(run_id) / "run.json"
+    tmp = path.with_name(f"run.json.{os.getpid()}.tmp")
+    tmp.write_text(json.dumps(data, indent=2) + "\n")
+    tmp.replace(path)
+
+
+def start_time(pid: int) -> str | None:
+    """Start time from `ps -o lstart` (C locale, UTC), whitespace-normalized."""
+    out = subprocess.run(["ps", "-o", "lstart=", "-p", str(pid)], capture_output=True, text=True, env=PS_ENV)
+    text = " ".join(out.stdout.split())
+    return text if out.returncode == 0 and text else None
+
+
+def leader_matches(proc: dict) -> bool:
+    now = start_time(proc["pid"])
+    return bool(proc.get("started")) and now == proc["started"]
+
+
+def group_members(pgid: int) -> list[int]:
+    out = subprocess.run(["ps", "-A", "-o", "pid=,pgid="], capture_output=True, text=True, env=PS_ENV)
+    if out.returncode != 0:
+        fail(f"ps failed: {out.stderr.strip()}")
+    rows = (line.split() for line in out.stdout.splitlines())
+    return [int(pid) for pid, pg in rows if int(pg) == pgid]
+
+
+def listeners(port: int) -> list[int | str]:
+    """PIDs listening on a TCP port. On Linux, a listening socket no readable
+    process holds (another user's) appears as an "inode N" label, which
+    pgid_of treats as outside every run. Other platforms ask lsof and fail
+    loudly when lsof cannot answer."""
+    if sys.platform.startswith("linux"):
+        return proc_listeners(port)
+    try:
+        out = subprocess.run(["lsof", "-nP", "-t", f"-iTCP:{port}", "-sTCP:LISTEN"], capture_output=True, text=True)
+    except FileNotFoundError:
+        fail("lsof is required and is not installed")
+    # lsof prints "WARNING: can't stat()" lines for unrelated mounts; anything else is a failure.
+    errors = [l for l in out.stderr.splitlines() if l.strip() and "WARNING:" not in l]
+    if out.returncode not in (0, 1) or errors:
+        fail(f"lsof failed for :{port}: {' '.join(errors) or out.returncode}")
+    return sorted({int(p) for p in out.stdout.split()})
+
+
+def proc_listeners(port: int) -> list[int | str]:
+    """Linux listeners from /proc. lsof there skips processes whose name has
+    an unmatched "(", which includes Next.js's "next-server (v1"."""
+    inodes: set[str] = set()
+    tables = 0
+    for table in ("/proc/net/tcp", "/proc/net/tcp6"):
+        try:
+            rows = Path(table).read_text().splitlines()[1:]
+        except FileNotFoundError:
+            continue
+        tables += 1
+        for row in rows:
+            cols = row.split()
+            if cols[3] == "0A" and int(cols[1].rsplit(":", 1)[1], 16) == port:
+                inodes.add(cols[9])
+    if not tables:
+        fail(f"cannot read /proc/net/tcp or /proc/net/tcp6 to check :{port}")
+    pids: set[int] = set()
+    held: set[str] = set()
+    for entry in os.listdir("/proc") if inodes else []:
+        if not entry.isdigit():
+            continue
+        try:
+            fds = os.listdir(f"/proc/{entry}/fd")
+        except OSError:
+            continue
+        for fd in fds:
+            try:
+                link = os.readlink(f"/proc/{entry}/fd/{fd}")
+            except OSError:
+                continue
+            if link.startswith("socket:[") and link[8:-1] in inodes:
+                pids.add(int(entry))
+                held.add(link[8:-1])
+    return [*sorted(pids), *(f"inode {i}" for i in sorted(inodes - held))]
+
+
+def carries_run(pid: int, run_id: str) -> bool:
+    """Whether pid's environment has the VERIFY_RUN_ID spawn gave this run."""
+    marker = f"VERIFY_RUN_ID={run_id}"
+    if sys.platform.startswith("linux"):
+        try:
+            return marker in Path(f"/proc/{pid}/environ").read_bytes().decode(errors="replace").split("\0")
+        except OSError:
+            return False
+    out = subprocess.run(["ps", "-wwE", "-o", "command=", "-p", str(pid)], capture_output=True, text=True, env=PS_ENV)
+    return marker in out.stdout.split()
+
+
+def pgid_of(pid: int | str) -> int | None:
+    if isinstance(pid, str):
+        return None
+    try:
+        return os.getpgid(pid)
+    except ProcessLookupError:
+        return None
+
+
+def has_ipv6_loopback() -> bool:
+    try:
+        with socket.socket(socket.AF_INET6) as v6:
+            v6.bind(("::1", 0))
+        return True
+    except OSError:
+        return False
+
+
+def parse_port_ranges(text: str) -> list[tuple[int, int]]:
+    """The start and end port of each row in netsh's excludedportrange table.
+    Rows Windows administers end in "*"."""
+    return [(int(m[1]), int(m[2])) for m in re.finditer(r"^\s*(\d+)\s+(\d+)\b", text, re.M)]
+
+
+@functools.cache
+def windows_reserved_ports() -> list[tuple[int, int]] | None:
+    """TCP port ranges Windows keeps for itself, or None when netsh can't say.
+    Hyper-V and WinNAT reserve them at boot, and they move between boots. On
+    WSL, Windows Chrome reaches a WSL server on localhost through a relay that
+    binds the same port on Windows, so a port in one of these ranges answers
+    inside WSL and refuses Chrome. Empty off WSL."""
+    if "microsoft" not in os.uname().release.lower():
+        return []
+    netsh = shutil.which("netsh.exe") or "/mnt/c/Windows/System32/netsh.exe"
+    ranges: list[tuple[int, int]] = []
+    for family in ("ipv4", "ipv6"):
+        try:
+            out = subprocess.run([netsh, "interface", family, "show", "excludedportrange", "protocol=tcp"],
+                                 capture_output=True, text=True, errors="replace", timeout=10)
+        except (OSError, subprocess.TimeoutExpired):
+            return None
+        if out.returncode != 0:
+            return None
+        ranges += parse_port_ranges(out.stdout)
+    return ranges
+
+
+def reserved_range(port: int, ranges: list[tuple[int, int]]) -> tuple[int, int] | None:
+    return next(((lo, hi) for lo, hi in ranges if lo <= port <= hi), None)
+
+
+def free_port() -> int:
+    """A port free on 127.0.0.1 and, where the host has it, ::1 (Vite on macOS
+    binds ::1). On WSL it also skips the ports Windows reserves."""
+    check_v6 = has_ipv6_loopback()
+    reserved = windows_reserved_ports() or []
+    for _ in range(20):
+        with socket.socket() as v4:
+            v4.bind(("127.0.0.1", 0))
+            port = v4.getsockname()[1]
+            if reserved_range(port, reserved):
+                continue
+            if not check_v6:
+                return port
+            try:
+                with socket.socket(socket.AF_INET6) as v6:
+                    v6.bind(("::1", port))
+                return port
+            except OSError:
+                continue
+    fail("could not find a port free on both 127.0.0.1 and ::1, outside the ports Windows reserves")
+
+
+def lock_file() -> Path:
+    return state_dir() / "lock"
+
+
+def lock_holder() -> tuple[str | None, float]:
+    f = lock_file()
+    if not f.exists():
+        return None, 0.0
+    holder = f.read_text().strip() or "<unreadable lock>"
+    return holder, time.time() - f.stat().st_mtime
+
+
+def holder_alive(run_id: str) -> bool:
+    try:
+        procs = json.loads((state_dir() / "runs" / run_id / "run.json").read_text())["processes"]
+    except (OSError, ValueError, KeyError):
+        return False
+    return any(leader_matches(p) or group_members(p["pgid"]) for p in procs)
+
+
+def holder_stale(run_id: str, age: float) -> bool:
+    """A holder is stale once no process it started is alive and it has been
+    idle 15 minutes. A run whose processes an existing runner owns (it has
+    called `doctor --lock-only`) cannot be checked, so it goes stale only
+    after 12 idle hours."""
+    try:
+        data = json.loads((state_dir() / "runs" / run_id / "run.json").read_text())
+    except (OSError, ValueError):
+        data = {}
+    if data.get("external"):
+        return age > LOCK_ONLY_STALE_SECONDS
+    return not holder_alive(run_id) and age > STALE_LOCK_SECONDS
+
+
+def cmd_new(a: argparse.Namespace) -> None:
+    if not re.fullmatch(r"[a-z0-9][a-z0-9-]{0,60}", a.feature):
+        fail("feature must be lowercase letters, digits and hyphens")
+    run_id = f"{a.feature}-{datetime.now():%Y%m%dT%H%M%S}-{secrets.token_hex(2)}"
+    if a.lock:
+        with mutex():
+            take_lock(run_id, a.steal_stale)
+            try:
+                create_run(run_id, locked=True)
+            except BaseException:
+                if lock_holder()[0] == run_id:
+                    lock_file().unlink()
+                raise
+    else:
+        create_run(run_id, locked=False)
+    print(run_id)
+
+
+def create_run(run_id: str, locked: bool) -> None:
+    d = state_dir() / "runs" / run_id
+    (d / "artifacts").mkdir(parents=True)
+    commit = subprocess.run(["git", "rev-parse", "HEAD"], capture_output=True, text=True).stdout.strip()
+    dirty = subprocess.run(["git", "status", "--porcelain"], capture_output=True, text=True).stdout.strip() != ""
+    (d / "run.json").write_text(json.dumps({
+        "run_id": run_id, "created": datetime.now().isoformat(timespec="seconds"),
+        "worktree": str(root()), "host": socket.gethostname(), "commit": commit, "dirty": dirty,
+        "helper_version": VERSION, "locked": locked, "processes": [], "tabs": [],
+    }, indent=2) + "\n")
+
+
+def take_lock(run_id: str, steal_stale: bool) -> None:
+    """Caller holds the mutex."""
+    holder, age = lock_holder()
+    if holder == run_id:
+        print(f"lock already held by {run_id}", file=sys.stderr)
+        return
+    if holder:
+        stale = holder_stale(holder, age)
+        if not (steal_stale and stale):
+            why = "stale" if stale else "live, recently touched, or lock-only and idle under 12 h"
+            fail(f"lock held by {holder} ({why}). Wait, use another worktree, or --steal-stale once it is stale.")
+        print(f"taking stale lock from {holder}", file=sys.stderr)
+    tmp = lock_file().with_name(f"lock.{os.getpid()}.tmp")
+    tmp.write_text(run_id + "\n")
+    tmp.replace(lock_file())
+    print(f"lock held by {run_id}", file=sys.stderr)
+
+
+def touch_lock(run_id: str) -> None:
+    """Refreshes the lock's age while its holder is working. Caller holds the mutex."""
+    if lock_holder()[0] == run_id:
+        os.utime(lock_file())
+
+
+def cmd_lock(a: argparse.Namespace) -> None:
+    run_dir(a.run_id)
+    with mutex():
+        if load(a.run_id).get("closing"):
+            fail(f"{a.run_id} has been cleaned up; start a new run")
+        take_lock(a.run_id, a.steal_stale)
+        data = load(a.run_id)
+        data["locked"] = True
+        save(a.run_id, data)
+
+
+def cmd_spawn(a: argparse.Namespace) -> None:
+    run_dir(a.run_id)
+    cmd = a.cmd
+    if not cmd:
+        fail("give the command after --, e.g. spawn <run-id> --name web -- npm run dev -- --port {port}")
+    port = a.port or (free_port() if any("{port}" in x for x in [*cmd, *a.env, a.ready_url or ""]) else None)
+    sub = (lambda s: s.replace("{port}", str(port))) if port else (lambda s: s)
+    if a.ready_url:
+        url_port = urlparse(sub(a.ready_url)).port
+        if url_port is None:
+            fail("--ready-url must name its port, e.g. http://localhost:{port}/")
+        if port and url_port != port:
+            fail(f"--ready-url port {url_port} differs from the run's port {port}")
+        port = url_port
+    cmd = [sub(x) for x in cmd]
+    env = dict(os.environ)
+    for kv in a.env:
+        k, _, v = sub(kv).partition("=")
+        env[k] = v
+    env["VERIFY_RUN_ID"] = a.run_id
+    cwd = Path(a.cwd).resolve() if a.cwd else Path.cwd()
+    log = run_dir(a.run_id) / f"{a.name}.log"
+    with mutex():
+        holder, _ = lock_holder()
+        if holder and holder != a.run_id:
+            fail(f"worktree lock is held by {holder}, not {a.run_id}")
+        data = load(a.run_id)
+        if data.get("closing"):
+            fail(f"{a.run_id} is being cleaned up; start a new run")
+        if data.get("locked") and holder != a.run_id:
+            fail(f"{a.run_id} took the lock earlier but no longer holds it")
+        touch_lock(a.run_id)
+        with open(log, "ab") as out:
+            try:
+                proc = subprocess.Popen(cmd, cwd=cwd, env=env, stdout=out, stderr=subprocess.STDOUT,
+                                        stdin=subprocess.DEVNULL, start_new_session=True)
+            except OSError as e:
+                fail(f"could not start {cmd[0]}: {e.strerror}")
+        started = None
+        for _ in range(40):
+            started = start_time(proc.pid)
+            if started:
+                break
+            time.sleep(0.05)
+        if not started:
+            try:
+                os.killpg(proc.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+            fail(f"could not read the start time of pid {proc.pid}; stopped it")
+        data = load(a.run_id)
+        data["processes"].append({"name": a.name, "pid": proc.pid, "pgid": proc.pid, "started": started,
+                                  "command": cmd, "cwd": str(cwd), "port": port, "log": str(log)})
+        save(a.run_id, data)
+    url = sub(a.ready_url) if a.ready_url else None
+    deadline = time.time() + a.ready_timeout
+    while url and time.time() < deadline:
+        if proc.poll() is not None:
+            fail(f"{a.name} exited with {proc.returncode} during startup; see {log}")
+        try:
+            with urllib.request.urlopen(url, timeout=2) as r:
+                if r.status < 400:
+                    break
+        except Exception:
+            pass
+        time.sleep(0.5)
+    else:
+        if url:
+            fail(f"{url} not ready within {a.ready_timeout}s; run `verify-run cleanup {a.run_id}`")
+    if port:
+        ls = listeners(port)
+        if url and not any(pgid_of(p) == proc.pid for p in ls):
+            fail(f"nothing in {a.name}'s process group listens on :{port}; a command that daemonizes or calls "
+                 f"setsid cannot be owned. Run `verify-run cleanup {a.run_id}`")
+        theirs = [p for p in ls if pgid_of(p) != proc.pid]
+        if theirs:
+            fail(f":{port} also has listeners outside this run: {theirs}")
+    print(json.dumps({"name": a.name, "pid": proc.pid, "port": port, "url": url}))
+
+
+def cmd_tab(a: argparse.Namespace) -> None:
+    with mutex():
+        data = load(a.run_id)
+        if a.tab_id not in data["tabs"]:
+            data["tabs"].append(a.tab_id)
+        save(a.run_id, data)
+    print(f"recorded tab {a.tab_id}")
+
+
+def cmd_doctor(a: argparse.Namespace) -> None:
+    with mutex():
+        data = load(a.run_id)
+        holder, _ = lock_holder()
+        if holder and holder != a.run_id:
+            fail(f"DOCTOR FAIL: lock held by {holder}")
+        if data.get("locked") and holder != a.run_id:
+            fail(f"DOCTOR FAIL: {a.run_id} took the lock earlier but no longer holds it")
+        if holder:
+            touch_lock(a.run_id)
+    if holder:
+        print(f"ok: lock held by {a.run_id}")
+    if a.lock_only:
+        if holder != a.run_id:
+            fail(f"DOCTOR FAIL: {a.run_id} does not hold the worktree lock")
+        if not data.get("external"):
+            with mutex():
+                data = load(a.run_id)
+                data["external"] = True
+                save(a.run_id, data)
+        print(f"DOCTOR PASS (lock only) {a.run_id}")
+        return
+    if not data["processes"]:
+        fail("DOCTOR FAIL: this run started no processes")
+    for p in data["processes"]:
+        if not leader_matches(p):
+            fail(f"DOCTOR FAIL: {p['name']} pid {p['pid']} is gone or the PID was reused")
+        print(f"ok: {p['name']} pid {p['pid']} alive, start time matches")
+        if p["port"]:
+            ls = listeners(p["port"])
+            if not ls:
+                fail(f"DOCTOR FAIL: nothing listens on :{p['port']}")
+            foreign = [x for x in ls if pgid_of(x) != p["pgid"]]
+            if foreign:
+                fail(f"DOCTOR FAIL: :{p['port']} listeners {foreign} are not in {p['name']}'s process group")
+            print(f"ok: :{p['port']} is served by {p['name']}'s process group")
+            reserved = windows_reserved_ports()
+            if reserved is None:
+                print(f"warn: netsh.exe didn't list the ports Windows reserves, so Windows Chrome may not reach :{p['port']}")
+            elif hit := reserved_range(p["port"], reserved):
+                fail(f"DOCTOR FAIL: :{p['port']} is in {hit[0]}-{hit[1]}, a range Windows reserves, so Windows Chrome "
+                     f"can't reach it. Run `verify-run cleanup {a.run_id}` and start a new run")
+    print(f"DOCTOR PASS {a.run_id}")
+
+
+def stop_group(p: dict, run_id: str) -> str | None:
+    """Stops one owned group. Returns a problem description, or None."""
+    def owned() -> bool:
+        if leader_matches(p):
+            return True
+        left = group_members(p["pgid"])
+        return start_time(p["pgid"]) is None and any(carries_run(x, run_id) for x in left)
+
+    if owned():
+        try:
+            os.killpg(p["pgid"], signal.SIGTERM)
+        except ProcessLookupError:
+            pass
+        for _ in range(40):
+            if not group_members(p["pgid"]):
+                break
+            time.sleep(0.25)
+        else:
+            # The group never emptied, so its ID was not reused and the proof above still
+            # holds even if SIGTERM took every marked member. Only a new process holding
+            # the leader's PID would mean the group emptied between polls.
+            if not (leader_matches(p) or start_time(p["pgid"]) is None):
+                left = group_members(p["pgid"])
+                return (f"{p['name']} group {p['pgid']} ignored SIGTERM and its leader's PID now belongs to "
+                        f"another process; confirm {left} are this run's and stop them by hand")
+            try:
+                os.killpg(p["pgid"], signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+            time.sleep(0.5)
+        left = group_members(p["pgid"])
+        print(f"stopped {p['name']} (process group {p['pgid']})")
+        return f"{p['name']} group {p['pgid']} still has {left}" if left else None
+    left = group_members(p["pgid"])
+    if left and start_time(p["pgid"]) is None:
+        return (f"{p['name']} leader {p['pid']} exited but group {p['pgid']} still has {left}, none showing "
+                f"VERIFY_RUN_ID={run_id}; confirm they are this run's and stop them by hand")
+    print(f"{p['name']} pid {p['pid']} already gone; not signalled")
+    return None
+
+
+def artifacts_listed(d: Path) -> list[str] | None:
+    ev = d / "evidence.md"
+    return sorted(set(re.findall(r"`(artifacts/[^`]+)`", ev.read_text()))) if ev.is_file() else None
+
+
+def artifact_ok(d: Path, rel: str) -> bool:
+    """A non-empty file under artifacts/, or a folder there that holds one."""
+    base = (d / "artifacts").resolve()
+    path = d / rel
+    if path.resolve() == base or not path.resolve().is_relative_to(base):
+        return False
+    files = path.rglob("*") if path.is_dir() else [path]
+    return any(f.is_file() and f.resolve().is_relative_to(base) and f.stat().st_size > 0 for f in files)
+
+
+def cmd_cleanup(a: argparse.Namespace) -> None:
+    d = run_dir(a.run_id)
+    with mutex():
+        data = load(a.run_id)
+        data["closing"] = True  # spawn refuses from here on, so nothing new starts mid-cleanup
+        save(a.run_id, data)
+    problems: list[str] = []
+    if data["tabs"]:
+        print("close these T3 tabs if still open (t3_preview_close), stopping any recording first: " + ", ".join(data["tabs"]))
+    for p in data["processes"]:
+        problem = stop_group(p, a.run_id)
+        if problem:
+            problems.append(problem)
+        if p["port"]:
+            left = listeners(p["port"])
+            if left:
+                problems.append(f":{p['port']} still has listeners {left}")
+    listed = artifacts_listed(d)
+    if a.final and not listed:
+        problems.append("--final needs evidence.md listing at least one `artifacts/...` path")
+    for rel in listed or []:
+        if artifact_ok(d, rel):
+            print(f"artifact ok: {rel}")
+        else:
+            problems.append(f"missing artifact {rel} (must be a non-empty file under artifacts/, or a folder holding one)")
+    for problem in problems:
+        print(f"PROBLEM: {problem}", file=sys.stderr)
+    with mutex():
+        holder, _ = lock_holder()
+        if holder == a.run_id and not problems:
+            lock_file().unlink()
+            print("released worktree lock")
+        elif holder == a.run_id:
+            print("kept the worktree lock until the problems above are resolved", file=sys.stderr)
+    sys.exit(1 if problems else 0)
+
+
+def cmd_status(a: argparse.Namespace) -> None:
+    holder, age = lock_holder()
+    print(f"lock: {holder} ({int(age)}s, {'stale' if holder_stale(holder, age) else 'held'})" if holder else "lock: free")
+    runs = state_dir() / "runs"
+    for d in sorted(runs.iterdir()) if runs.is_dir() else []:
+        try:
+            procs = json.loads((d / "run.json").read_text())["processes"]
+        except (OSError, ValueError, KeyError):
+            continue
+        live = [p["name"] for p in procs if leader_matches(p) or group_members(p["pgid"])]
+        print(f"{d.name}: {'live ' + ','.join(live) if live else 'stopped'}")
+
+
+def cmd_frame(a: argparse.Namespace) -> None:
+    ffmpeg = subprocess.run(["sh", "-c", "command -v ffmpeg"], capture_output=True, text=True).stdout.strip()
+    if not ffmpeg:
+        fail("ffmpeg is not on PATH on this machine; inspect the recording elsewhere and say so in evidence.md")
+    out = Path(a.out)
+    if out.resolve() == Path(a.video).resolve():
+        fail("the frame's output path is the recording itself; pick another name")
+    if out.suffix.lower() not in (".png", ".jpg", ".jpeg"):
+        fail("write the frame to a .png or .jpg")
+    out.unlink(missing_ok=True)
+    r = subprocess.run([ffmpeg, "-y", "-loglevel", "error", "-sseof", f"-{a.from_end}", "-i", a.video,
+                        "-frames:v", "1", a.out])
+    if r.returncode != 0 or not out.is_file() or out.stat().st_size == 0:
+        fail(f"ffmpeg wrote no frame to {a.out}; try a larger --from-end")
+
+
+def main() -> None:
+    ap = argparse.ArgumentParser(prog="verify-run", description="Run bookkeeping for a project's verify skill.")
+    ap.add_argument("--version", action="version", version=f"verify-run {VERSION}")
+    sp = ap.add_subparsers(dest="command", required=True)
+    p = sp.add_parser("new", help="create a run; prints its ID")
+    p.add_argument("feature")
+    p.add_argument("--lock", action="store_true", help="take the worktree lock first; create nothing if it is held")
+    p.add_argument("--steal-stale", action="store_true", help="with --lock, take a stale lock")
+    p.set_defaults(fn=cmd_new)
+    p = sp.add_parser("lock", help="take the worktree lock for a run")
+    p.add_argument("run_id")
+    p.add_argument("--steal-stale", action="store_true", help="take a lock whose holder has no live process and is older than 15 min")
+    p.set_defaults(fn=cmd_lock)
+    p = sp.add_parser("spawn", help="start an owned process group; put the command after --; {port} picks a free port")
+    p.add_argument("run_id")
+    p.add_argument("--name", required=True)
+    p.add_argument("--cwd")
+    p.add_argument("--port", type=int)
+    p.add_argument("--env", action="append", default=[], metavar="KEY=VALUE")
+    p.add_argument("--ready-url")
+    p.add_argument("--ready-timeout", type=float, default=60)
+    p.set_defaults(fn=cmd_spawn)
+    p = sp.add_parser("tab", help="record a T3 preview tab this run opened")
+    p.add_argument("run_id")
+    p.add_argument("tab_id")
+    p.set_defaults(fn=cmd_tab)
+    p = sp.add_parser("doctor", help="check lock, owned processes and port ownership; refreshes the lock")
+    p.add_argument("run_id")
+    p.add_argument("--lock-only", action="store_true", help="for an existing runner that owns the processes: check and refresh the lock only")
+    p.set_defaults(fn=cmd_doctor)
+    p = sp.add_parser("cleanup", help="stop owned process groups, release the lock, check evidence.md artifacts")
+    p.add_argument("run_id")
+    p.add_argument("--final", action="store_true", help="also require evidence.md to list at least one artifact")
+    p.set_defaults(fn=cmd_cleanup)
+    p = sp.add_parser("status", help="show the lock holder and which runs are live")
+    p.set_defaults(fn=cmd_status)
+    p = sp.add_parser("frame", help="grab a frame near the end of a recording with ffmpeg")
+    p.add_argument("video")
+    p.add_argument("out")
+    p.add_argument("--from-end", type=float, default=1.0, metavar="SECONDS")
+    p.set_defaults(fn=cmd_frame)
+    argv = sys.argv[1:]
+    cut = argv.index("--") if "--" in argv else len(argv)
+    a = ap.parse_args(argv[:cut])
+    a.cmd = argv[cut + 1:]
+    a.fn(a)
+
+
+if __name__ == "__main__":
+    main()

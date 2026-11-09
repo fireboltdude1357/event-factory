@@ -1,0 +1,16 @@
+{
+  "name": "@event-factory/engine",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./author": "./src/pack/authoring.ts"
+  },
+  "dependencies": {
+    "effect": "4.0.6"
+  },
+  "scripts": {
+    "typecheck": "tsc -p . --noEmit",
+    "bench:types": "tsx test/perf/authoring-bench.ts"
+  }
+}

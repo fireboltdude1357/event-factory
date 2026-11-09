@@ -1,0 +1,11 @@
+{
+  "name": "@event-factory/packs",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@event-factory/engine": "workspace:*"
+  },
+  "scripts": {
+    "typecheck": "tsc -p . --noEmit"
+  }
+}
