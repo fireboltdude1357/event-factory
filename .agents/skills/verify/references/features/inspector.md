@@ -1,17 +1,18 @@
 # Inspector
 
-Clicking anything shows what it is in the company's own words, plus what it is doing now. Every doc string comes from the pack, which is what makes the game documentation.
+The inspector is the `Spec sheet` tab of the work order. Clicking anything shows what it is in the company's own words, plus what it is doing now. Every doc string comes from the pack, which is what makes the game documentation.
 
 ## Sub-features
 
-- `inspect-building` shows the kind's title, role (Handler, Queue, Topic, Router, External system, Dead-letter queue), doc and live facts such as worker state and attempt number.
+- `inspect-building` shows the kind's title, role (Handler, Queue, Topic, Router, External system, Dead-letter queue), doc and live facts such as worker state and attempt number. An unlocked building also gets `Rotate` and `Remove` buttons.
 - `inspect-event` shows the event type doc, payload fields, idempotency key, correlation root, producer and creation tick, plus the causation trace with clickable event ids.
 - `inspect-belt` shows the pack's belt title and doc.
-- `inspect-kind` shows a palette kind's doc before it is placed.
+- `inspect-kind` shows a part's doc when it is picked from the tray.
+- `inspect-log` is the `Shift log` tab: the run's telemetry as sentences, newest first. Clicking an event id in it opens that event's spec sheet.
 
 ## How to get to it (user POV)
 
-- With no tool selected, click a map cell. Click a palette item to read its docs.
+- With no tool selected, click a map cell. Click a part to read its docs. The work order turns to the `Spec sheet` tab. `Notes` goes back to the brief.
 
 ## Driving it with Playwright
 
@@ -21,7 +22,7 @@ Preconditions: level `When payments fail` open, `Show solution` loaded.
 - **Event.** Click belt cells left of the PaymentService at `(5, 1)` until the panel shows `Idempotency key`. The panel title is `OrderPlaced v1`.
 - **Building.** Click `(5, 1)`. The panel shows `Handler`, `PaymentService` and the doc beginning `Charges the card`, with a worker's current attempt.
 - **Step.** Click belt cell `(4, 1)`, press `.` to step, and read the panel. Click the same cell again. The panel text must not change, which proves Step refreshed it.
-- **Script.** `drive.mjs --flow inspect`.
+- **Script.** `drive.mjs --flow inspect`. It reads the open tab through `getByRole("tabpanel")`.
 
 ## Gotchas
 

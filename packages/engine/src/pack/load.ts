@@ -78,7 +78,12 @@ const WhereSchema: Schema.Codec<WhereSource> = Schema.Union([
 
 const OutSideSchema = Schema.Literals(["front", "left", "right"]);
 const DisposalSchema = Schema.Union([Schema.Literal("drop"), Schema.Struct({ route: Schema.String })]);
-const kindBase = { title: Schema.String, doc: Schema.String, glyph: Schema.optionalKey(Schema.String) };
+const ColorSchema = Schema.TemplateLiteral(["#", Schema.String]);
+const colorPattern = /^#(?:[0-9a-f]{3}|[0-9a-f]{6})$/i;
+const checkColor = (report: Report, path: string, color: string | undefined) => {
+  if (color !== undefined && !colorPattern.test(color)) report(path, `color "${color}" must be a hex color such as "#f97316" or "#f93"`);
+};
+const kindBase = { title: Schema.String, doc: Schema.String, glyph: Schema.optionalKey(Schema.String), color: Schema.optionalKey(ColorSchema) };
 
 const SourceSchema = Schema.Struct({
   ...kindBase,
@@ -160,6 +165,7 @@ const ScenarioSchema = Schema.Struct({
   id: Schema.String,
   title: Schema.String,
   brief: Schema.String,
+  debrief: Schema.optionalKey(Schema.String),
   seed: Schema.Number,
   maxTicks: Schema.Number,
   map: Schema.Array(Schema.String),
@@ -311,6 +317,7 @@ function resolveEvents(decl: PackSource, report: Report): ReadonlyMap<EventTypeI
       if (!fields.has(field)) report(`${path}.key[${k}]`, `${name} has no field "${field}"`);
     });
     if (e.version !== undefined) integer(report, `${path}.version`, e.version, 1);
+    checkColor(report, `${path}.color`, e.color);
     const id = EventTypeId(name);
     events.set(id, { id, doc: e.doc, version: e.version ?? 1, fields, key: e.key ?? [], color: e.color ?? palette[i % palette.length] ?? "#888888" });
   });
@@ -364,7 +371,8 @@ function resolveKinds(decl: PackSource, events: ReadonlyMap<EventTypeId, EventTy
     if (name === "belt") report(path, `"belt" is reserved for the belt`);
     if (name === "any" || name === "anyExternal") report(path, `"${name}" is reserved, because an omitted \`kind\` or \`at\` means every kind`);
     if (!kindNamePattern.test(name)) report(path, `kind "${name}" must match ${kindNamePattern}`);
-    const base = { id: KindId(name), title: k.title, doc: k.doc, glyph: k.glyph ?? (k.title.charAt(0) || name.charAt(0)) };
+    checkColor(report, `${path}.color`, k.color);
+    const base = { id: KindId(name), title: k.title, doc: k.doc, glyph: k.glyph ?? (k.title.charAt(0) || name.charAt(0)), color: k.color ?? null };
 
     switch (k.archetype) {
       case "source": {
@@ -418,7 +426,7 @@ function resolveKinds(decl: PackSource, events: ReadonlyMap<EventTypeId, EventTy
 type MachineSource = Extract<PackSource["catalog"]["kinds"][string], { readonly archetype: "machine" }>;
 
 function resolveMachine(
-  base: Pick<MachineKind, "id" | "title" | "doc" | "glyph">,
+  base: Pick<MachineKind, "id" | "title" | "doc" | "glyph" | "color">,
   k: MachineSource,
   path: string,
   events: ReadonlyMap<EventTypeId, EventType>,
@@ -660,6 +668,7 @@ function resolveScenario(
     id: ScenarioId(s.id),
     title: s.title,
     brief: s.brief,
+    debrief: s.debrief ?? null,
     seed: s.seed,
     maxTicks: s.maxTicks,
     width,

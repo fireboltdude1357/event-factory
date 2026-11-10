@@ -62,6 +62,8 @@ interface KindBase {
   readonly title: string;
   readonly doc: string;
   readonly glyph: string;
+  /** The pack's accent for this kind, or null to let the game pick one from what the kind does. */
+  readonly color: `#${string}` | null;
 }
 
 export interface SourceKind extends KindBase {
@@ -169,6 +171,8 @@ export interface Scenario {
   readonly id: ScenarioId;
   readonly title: string;
   readonly brief: string;
+  /** Shown when the level is won, or null. */
+  readonly debrief: string | null;
   readonly seed: number;
   readonly maxTicks: number;
   readonly width: number;

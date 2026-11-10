@@ -3,13 +3,14 @@
 // every animation frame without going through React at all.
 
 import type { Result } from "effect";
-import type { EventId, KindId, ScenarioId, Tick } from "./ids.js";
-import { inspect as inspectSim, type InspectTarget, type Inspection } from "./inspect.js";
-import { countPlaced, type Facing, type Pack, type Point } from "./pack/model.js";
+import type { EntityId, EventId, EventTypeId, KindId, ScenarioId, Tick } from "./ids.js";
+import { inspect as inspectSim, shapeOf, type BuildingShape, type InspectTarget, type Inspection } from "./inspect.js";
+import { countPlaced, type Facing, type Kind, type Pack, type Placement, type Point } from "./pack/model.js";
 import type { GoalProgress, Metrics, Status } from "./sim/objectives.js";
 import { createSim, type Sim } from "./sim/sim.js";
 import type { Telemetry, TelemetryOf, TelemetryTag } from "./sim/telemetry.js";
-import { pointOf, type Command, type CommandRejected } from "./sim/world.js";
+import type { EntityState } from "./sim/archetypes/index.js";
+import { cellOf, outSides, pointOf, sideDirection, type Command, type CommandRejected } from "./sim/world.js";
 
 /**
  * Changes identity only when something React shows changes; never per tick of a stalled factory.
@@ -30,28 +31,65 @@ export interface SessionSnapshot {
 
 /** Everything the canvas draws. Built fresh per call from owned arrays; cheap at a few hundred parcels. */
 export interface RenderFrame {
+  /** Counts restarts (reset, rewind, loadSolution). Flash ids are unique within one run. */
+  readonly run: number;
   readonly tick: Tick;
+  /** The tick plus the share of the next one already elapsed. Belt and job animation read this, so a paused game holds still. */
+  readonly time: number;
+  /** Ticks a parcel spends on one belt tile. */
+  readonly ticksPerTile: number;
   readonly width: number;
   readonly height: number;
   readonly terrain: readonly ("floor" | "wall")[];
   readonly buildings: readonly {
+    readonly entity: EntityId;
+    readonly kind: KindId;
+    readonly shape: BuildingShape;
     readonly at: Point;
     readonly facing: Facing;
     readonly glyph: string;
     readonly title: string;
+    /** The pack's accent for the kind, or null. */
+    readonly color: string | null;
     readonly locked: boolean;
     readonly state: "idle" | "busy" | "stalled" | "failing";
     /** Parcels held, for a small badge. */
     readonly load: number;
+    /** Absolute directions this building can send to. `port` is a machine's name for that output. */
+    readonly outs: readonly { readonly facing: Facing; readonly port: string | null }[];
+    /** How far the current job is, 0 to 1, interpolated between ticks. Null when nothing is being worked on. */
+    readonly work: number | null;
+    /** A machine waiting to retry: the attempt it will make, the most it makes, and how much of the wait is left (1 to 0). */
+    readonly retry: { readonly attempt: number; readonly of: number; readonly wait: number } | null;
+    /** A broker's fullest buffer as a share of its capacity, 0 to 1. Null for everything else. */
+    readonly fill: number | null;
   }[];
-  readonly belts: readonly { readonly at: Point; readonly facing: Facing }[];
+  readonly belts: readonly { readonly entity: EntityId; readonly at: Point; readonly facing: Facing; readonly locked: boolean }[];
   /**
    * Position in tile units, already interpolated between tiles: tile (x, y)
    * spans [x, x+1) by [y, y+1), so its center is (x + 0.5, y + 0.5).
    */
-  readonly parcels: readonly { readonly x: number; readonly y: number; readonly event: EventId; readonly color: string; readonly duplicate: boolean }[];
-  /** Short-lived markers from recent telemetry at the building that recorded it, newest first. */
-  readonly flashes: readonly { readonly at: Point; readonly tag: FlashTag; readonly age: number }[];
+  readonly parcels: readonly {
+    /** The parcel's own id, stable while it moves. Fanout copies of one event differ here. */
+    readonly id: number;
+    /** The belt tile it is on. `x` and `y` alone cannot say which tile a parcel on a shared edge belongs to. */
+    readonly at: Point;
+    readonly x: number;
+    readonly y: number;
+    readonly facing: Facing;
+    readonly event: EventId;
+    readonly type: EventTypeId;
+    /** The type's position in the pack's event list, so a renderer can give each type its own silhouette. */
+    readonly typeIndex: number;
+    readonly color: string;
+    readonly duplicate: boolean;
+  }[];
+  /**
+   * Short-lived markers from recent telemetry at the building that recorded it, newest first.
+   * `id` is unique within a run, so a renderer can start an animation once per marker.
+   * `color` is the event's color.
+   */
+  readonly flashes: readonly { readonly id: number; readonly at: Point; readonly tag: FlashTag; readonly age: number; readonly color: string }[];
 }
 
 export interface Session {
@@ -66,6 +104,8 @@ export interface Session {
   step(): void;
   /** Back to the scenario's preplaced layout at tick 0. Keeps nothing. */
   reset(): void;
+  /** Back to tick 0 with the layout as it stands, so a lost run can be fixed and played again. */
+  rewind(): void;
   /** Loads the reference solution; used by the "show me" button and the e2e smoke. */
   loadSolution(): void;
 
@@ -73,6 +113,8 @@ export interface Session {
   frame(): RenderFrame;
   /** Docs, live facts, and (for events) the causation trace. The only way to get a trace. */
   inspect(target: InspectTarget): Inspection | null;
+  /** The type of an event a telemetry record names, or null for an id this run never minted. */
+  typeOf(event: EventId): EventTypeId | null;
 
   /** For tutorials: typed by tag. Returns unsubscribe. */
   on<T extends TelemetryTag>(tag: T, listener: (t: TelemetryOf<T>) => void): () => void;
@@ -91,7 +133,7 @@ export interface SessionOptions {
 /** Most ticks one frame may run. A slow frame skips time instead of spiralling. */
 const maxTicksPerFrame = 8;
 const flashTicks = 8;
-const flashTags = ["failed", "retrying", "dropped", "deadLettered", "delivered", "duplicateApplied", "duplicateIgnored", "outOfOrder"] as const satisfies readonly TelemetryTag[];
+const flashTags = ["emitted", "produced", "failed", "retrying", "dropped", "deadLettered", "delivered", "duplicateApplied", "duplicateIgnored", "outOfOrder"] as const satisfies readonly TelemetryTag[];
 
 /** Telemetry the map flashes. The canvas maps each one to a color. */
 export type FlashTag = (typeof flashTags)[number];
@@ -112,6 +154,40 @@ const animationFrames = (onFrame: (nowMs: number) => void): (() => void) => {
   };
 };
 
+type Progress = Pick<RenderFrame["buildings"][number], "work" | "retry" | "fill">;
+
+const share = (n: number) => Math.max(0, Math.min(1, n));
+
+/** Job progress, retry wait and buffer fill at `now`, which is the tick plus the fraction of the next one already elapsed. */
+function progress(kind: Kind, entity: EntityState | undefined, now: number): Progress {
+  const none: Progress = { work: null, retry: null, fill: null };
+  if (entity === undefined) return none;
+  if (kind.archetype === "broker" && entity.archetype === "broker") {
+    const s = entity.state;
+    const fullest = s.delivery === "competing" ? s.buffer.length : Math.max(0, ...[...s.buffers.values()].map((b) => b.length));
+    return { ...none, fill: share(fullest / kind.capacity) };
+  }
+  if (kind.archetype === "sink" && entity.archetype === "sink") {
+    return entity.state.current === null ? none : { ...none, work: share(1 - (entity.state.busyUntil - now) / Math.max(1, kind.ticksPerEvent)) };
+  }
+  if (kind.archetype === "machine" && entity.archetype === "machine") {
+    let work: number | null = null;
+    let retry: Progress["retry"] = null;
+    for (const slot of entity.state.slots) {
+      if (slot.phase === "working") {
+        const ticks = kind.recipes[slot.recipe]?.ticks ?? 0;
+        work = Math.max(work ?? 0, ticks === 0 ? 1 : share(1 - (slot.doneAt - now) / ticks));
+      } else if (slot.phase === "backoff" && retry === null) {
+        const { backoff, maxAttempts } = kind.failures;
+        const total = backoff.kind === "fixed" ? backoff.ticks : backoff.ticks * 2 ** (slot.attempt - 2);
+        retry = { attempt: slot.attempt, of: maxAttempts, wait: share((slot.resumeAt - now) / Math.max(1, total)) };
+      }
+    }
+    return { work, retry, fill: null };
+  }
+  return none;
+}
+
 function isTag<T extends TelemetryTag>(t: Telemetry, tag: T): t is TelemetryOf<T> {
   return t.tag === tag;
 }
@@ -120,6 +196,7 @@ export function createSession(pack: Pack, scenarioId: ScenarioId, options: Sessi
   const scenario = pack.scenarios.find((s) => s.id === scenarioId);
   if (scenario === undefined) throw new Error(`unknown scenario ${scenarioId}`);
   const ticksPerSecond = options.ticksPerSecond ?? 10;
+  const typeOrder = new Map([...pack.events.keys()].map((id, i) => [id, i]));
   const frames = options.frames ?? animationFrames;
 
   let sim: Sim = createSim(pack, scenario);
@@ -129,6 +206,7 @@ export function createSession(pack: Pack, scenarioId: ScenarioId, options: Sessi
   let lastFrame: number | null = null;
   // Fraction of the next tick already elapsed; drives interpolation.
   let pendingTicks = 0;
+  let run = 0;
   let hints: readonly string[] = [];
   const subscribers = new Set<() => void>();
   const listeners = new Set<(t: Telemetry) => void>();
@@ -200,6 +278,21 @@ export function createSession(pack: Pack, scenarioId: ScenarioId, options: Sessi
     halt();
     sim = createSim(pack, scenario);
     hints = [];
+    run++;
+  };
+
+  const sameBuild = (a: Placement, b: Placement) =>
+    a.build.kind === b.build.kind && (a.build.kind === "belt" || (b.build.kind === "building" && a.build.id === b.build.id));
+
+  /** Makes the fresh sim's layout match `wanted`: only unlocked cells can differ, and those the player may change. */
+  const restore = (wanted: readonly Placement[]) => {
+    const want = new Map(wanted.map((p) => [cellOf(scenario, p.at), p]));
+    for (const p of [...sim.layout.placements.values()]) {
+      const target = want.get(cellOf(scenario, p.at));
+      if (target === undefined || !sameBuild(p, target)) sim.apply({ kind: "remove", at: p.at });
+      else if (target.facing !== p.facing) sim.apply({ kind: "rotate", at: p.at, to: target.facing });
+    }
+    for (const [cell, p] of want) if (!sim.layout.byCell.has(cell)) sim.apply({ kind: "place", at: p.at, facing: p.facing, build: p.build });
   };
 
   const dispatch = (command: Command) => {
@@ -240,6 +333,12 @@ export function createSession(pack: Pack, scenarioId: ScenarioId, options: Sessi
       restart();
       refresh();
     },
+    rewind() {
+      const layout = [...sim.layout.placements.values()];
+      restart();
+      restore(layout);
+      refresh();
+    },
     loadSolution() {
       restart();
       for (const p of scenario.solution) {
@@ -257,7 +356,7 @@ export function createSession(pack: Pack, scenarioId: ScenarioId, options: Sessi
       const belts: RenderFrame["belts"][number][] = [];
       for (const placed of sim.layout.placements.values()) {
         if (placed.build.kind === "belt") {
-          belts.push({ at: placed.at, facing: placed.facing });
+          belts.push({ entity: placed.entity, at: placed.at, facing: placed.facing, locked: placed.locked });
           continue;
         }
         const kind = pack.kinds.get(placed.build.id);
@@ -266,7 +365,24 @@ export function createSession(pack: Pack, scenarioId: ScenarioId, options: Sessi
         const entity = sim.entities.get(placed.entity);
         const failing = entity?.archetype === "machine" && entity.state.slots.some((s) => s.phase === "backoff");
         const state = sim.stalled.has(placed.entity) ? "stalled" : failing ? "failing" : load > 0 ? "busy" : "idle";
-        buildings.push({ at: placed.at, facing: placed.facing, glyph: kind.glyph, title: kind.title, locked: placed.locked, state, load });
+        buildings.push({
+          entity: placed.entity,
+          kind: kind.id,
+          shape: shapeOf(kind),
+          at: placed.at,
+          facing: placed.facing,
+          glyph: kind.glyph,
+          title: kind.title,
+          color: kind.color,
+          locked: placed.locked,
+          state,
+          load,
+          outs: outSides(kind).map((side) => ({
+            facing: sideDirection(placed.facing, side),
+            port: kind.archetype === "machine" ? (kind.ports.find((p) => p.side === side)?.id ?? null) : null,
+          })),
+          ...progress(kind, entity, sim.tick + fraction),
+        });
       }
 
       const parcels: RenderFrame["parcels"][number][] = [];
@@ -281,9 +397,14 @@ export function createSession(pack: Pack, scenarioId: ScenarioId, options: Sessi
         const dy = placed.facing === "south" ? 1 : placed.facing === "north" ? -1 : 0;
         const event = sim.log.get(slot.parcel.event);
         parcels.push({
+          id: slot.parcel.id,
+          at: p,
           x: p.x + 0.5 + dx * along,
           y: p.y + 0.5 + dy * along,
+          facing: placed.facing,
           event: event.id,
+          type: event.type,
+          typeIndex: typeOrder.get(event.type) ?? 0,
           color: pack.events.get(event.type)?.color ?? "#888888",
           duplicate: sim.duplicates.has(slot.parcel.id),
         });
@@ -295,13 +416,15 @@ export function createSession(pack: Pack, scenarioId: ScenarioId, options: Sessi
         if (t === undefined || sim.tick - t.tick >= flashTicks) break;
         if (!isFlash(t)) continue;
         const placed = sim.layout.placements.get(t.entity);
-        if (placed !== undefined) flashes.push({ at: placed.at, tag: t.tag, age: sim.tick - t.tick });
+        if (placed !== undefined)
+          flashes.push({ id: i, at: placed.at, tag: t.tag, age: sim.tick - t.tick, color: pack.events.get(sim.log.get(t.event).type)?.color ?? "#888888" });
       }
 
-      return { tick: sim.tick, width: scenario.width, height: scenario.height, terrain: scenario.terrain, buildings, belts, parcels, flashes };
+      return { run, tick: sim.tick, time: sim.tick + fraction, ticksPerTile: tpt, width: scenario.width, height: scenario.height, terrain: scenario.terrain, buildings, belts, parcels, flashes };
     },
 
     inspect: (target) => inspectSim(sim, target),
+    typeOf: (event) => (event >= 0 && event < sim.log.size ? sim.log.get(event).type : null),
 
     on(tag, listener) {
       const wrapped = (t: Telemetry) => {

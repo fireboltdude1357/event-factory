@@ -1,0 +1,125 @@
+/* A honey-wood workbench: plank seams and a faint grain. */
+.toy-bench {
+  background-color: #d6a56b;
+  background-image:
+    repeating-linear-gradient(90deg, transparent 0 238px, rgba(84, 50, 20, 0.28) 238px 241px),
+    repeating-linear-gradient(0deg, rgba(255, 255, 255, 0.05) 0 2px, transparent 2px 9px),
+    repeating-linear-gradient(0deg, rgba(110, 66, 28, 0.06) 0 1px, transparent 1px 23px);
+}
+
+.toy-board {
+  border: 4px solid var(--color-ink);
+  border-radius: 22px;
+  background: #b07a45;
+  box-shadow: 6px 8px 0 rgba(42, 31, 23, 0.35);
+}
+
+.toy-plastic {
+  border: 3px solid var(--color-ink);
+  border-radius: 18px;
+  box-shadow: 4px 5px 0 rgba(42, 31, 23, 0.35);
+}
+
+/* A press-down tile: a thick bottom edge that collapses when pressed or picked. */
+.toy-key {
+  border: 3px solid var(--color-ink);
+  border-radius: 14px;
+  box-shadow: 0 5px 0 var(--color-ink);
+  transition:
+    transform 70ms ease-out,
+    box-shadow 70ms ease-out;
+}
+.toy-key:not(:disabled):hover {
+  transform: translateY(-1px);
+  box-shadow: 0 6px 0 var(--color-ink);
+}
+.toy-key:not(:disabled):active,
+.toy-key[aria-pressed="true"] {
+  transform: translateY(4px);
+  box-shadow: 0 1px 0 var(--color-ink);
+}
+.toy-key:disabled {
+  opacity: 0.45;
+  box-shadow: 0 2px 0 var(--color-ink);
+  transform: translateY(3px);
+}
+
+.toy-clipboard {
+  border: 4px solid var(--color-ink);
+  border-radius: 20px;
+  background: #9c6a3a;
+  box-shadow: 6px 8px 0 rgba(42, 31, 23, 0.35);
+}
+
+/* Ruled paper. */
+.toy-paper {
+  background-color: #fffdf6;
+  background-image: repeating-linear-gradient(180deg, transparent 0 27px, rgba(80, 140, 220, 0.16) 27px 28px);
+  border: 2.5px solid var(--color-ink);
+  border-radius: 6px;
+}
+
+.toy-tape {
+  background: rgba(255, 236, 170, 0.92);
+  border-left: 2px dashed rgba(42, 31, 23, 0.25);
+  border-right: 2px dashed rgba(42, 31, 23, 0.25);
+  box-shadow: 0 2px 0 rgba(42, 31, 23, 0.18);
+}
+
+.toy-sticky {
+  background: #ffe873;
+  border: 2px solid var(--color-ink);
+  box-shadow: 3px 4px 0 rgba(42, 31, 23, 0.25);
+  transform: rotate(-1deg);
+}
+
+.toy-stamp {
+  border: 5px double currentColor;
+  border-radius: 10px;
+  transform: rotate(-9deg);
+  mix-blend-mode: multiply;
+}
+
+/* The rubber stamp comes down once, after the map's own ending has started. */
+@keyframes toy-stamp {
+  0% {
+    opacity: 0;
+    transform: scale(2.6) rotate(-20deg);
+  }
+  60% {
+    opacity: 1;
+    transform: scale(0.9) rotate(-8deg);
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1) rotate(-9deg);
+  }
+}
+.toy-stamp-in {
+  animation: toy-stamp 380ms cubic-bezier(0.3, 0.7, 0.4, 1.2) 600ms backwards;
+}
+@keyframes toy-pop {
+  0% {
+    transform: scale(0.6);
+    opacity: 0;
+  }
+  70% {
+    transform: scale(1.08);
+    opacity: 1;
+  }
+  100% {
+    transform: none;
+  }
+}
+.toy-pop {
+  animation: toy-pop 240ms ease-out;
+}
+@media (prefers-reduced-motion: reduce) {
+  .toy-stamp-in,
+  .toy-pop {
+    animation: none;
+  }
+  .toy-key {
+    transition: none;
+  }
+}

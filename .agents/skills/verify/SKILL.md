@@ -5,7 +5,7 @@ description: "Run and verify Event Factory (the web game and the pack:check CLI)
 
 # Verify Event Factory
 
-Event Factory is a browser game that renders a domain pack. This skill proves a change two ways. `pnpm pack:check` proves every level of a pack headlessly. `scripts/drive.mjs` plays the real web app through its UI with Playwright and records screenshots, a video and `results.json`. On stl-wsl the drive connects to Windows Chrome through `win-chrome`, which renders on the GPU. Elsewhere it launches local Playwright Chromium.
+Event Factory is a browser game that renders a domain pack. This skill proves a change two ways. `pnpm pack:check` proves every level of a pack headlessly. `scripts/drive.mjs` plays the real web app through its UI with Playwright, at desktop and phone width, and records screenshots, videos and `results.json`. `scripts/shots.mjs` takes a quick set of screenshots at one viewport with no assertions, for judging a visual change while you work. On stl-wsl the drive connects to Windows Chrome through `win-chrome`, which renders on the GPU. Elsewhere it launches local Playwright Chromium.
 
 Verification-owned paths (the maintenance pass may edit these, never product code): `.agents/skills/verify/`.
 
@@ -57,10 +57,10 @@ It passes when the dev server is alive with its recorded start time and is the o
 ```sh
 WC=~/code/fleet/skills/machine/stl-wsl/claude/win-chrome/scripts/win-chrome   # stl-wsl only
 $WC run -- node .agents/skills/verify/scripts/drive.mjs \
-  --url http://localhost:<port>/ --out .verify/runs/$run_id/artifacts [--flow all|levels|build|inspect]
+  --url http://localhost:<port>/ --out .verify/runs/$run_id/artifacts [--flow all|levels|build|retry|inspect|idle|phone]
 ```
 
-Without `win-chrome`, run the same `node` command directly. The script prints one `pass` or `FAIL` line per step and exits 1 on any failure. The `build` and `inspect` flows use the example pack's coordinates. Choose `--flow levels` for any other pack. Convert the WebM for a PR with `ffmpeg -i artifacts/video/*.webm -c:v libx264 -pix_fmt yuv420p artifacts/run.mp4`.
+Without `win-chrome`, run the same `node` command directly. The script prints one `pass` or `FAIL` line per step and exits 1 on any failure. The `build`, `retry`, `inspect` and `phone` flows use the example pack's coordinates. Choose `--flow levels` and `--flow idle` for any other pack. Each flow records its own video under `artifacts/video/<flow>/`. Convert one for a PR with `ffmpeg -i artifacts/video/build/*.webm -c:v libx264 -pix_fmt yuv420p artifacts/build.mp4`.
 
 Pick the recipe from `references/features/` for the feature under test.
 
@@ -75,14 +75,14 @@ A proof exercises the production user path and shows what a skeptical reviewer w
 - Mock only where a production boundary already isolates the external system (a payment provider's test mode, say). Never mock the behavior under test.
 - When a safe path is a dry run or test mode, observe what it actually skips.
 - Report an unreachable path with the attempted route and the unmet prerequisite. Never report a skipped entry point as verified through another one.
-- Look at every screenshot and at least one frame of each recording before calling it proof.
+- Look at every screenshot and at least one frame of each recording before calling it proof. A drive that passes while a screenshot looks wrong is a failed proof: fix the product, then add the assertion that would have caught it.
 
 ## Evidence
 
 `.verify/runs/<run-id>/evidence.md` records:
 
 - run ID, commit SHA plus dirty flag, worktree path, host (all in `run.json`), and the driver
-- the pack, viewport (1280x800), and the `pack:check` result
+- the pack, viewports (1280x800 and 390x844), and the `pack:check` result
 - per feature step: feature ID, entry point, action, assertion, observed result, artifact paths, and whether you inspected each artifact
 
 Write each artifact as a backticked run-relative path such as `` `artifacts/levels.png` ``. `verify-run cleanup` checks that each one exists. For PRs and chat, upload with `file-upload` and embed the screenshots and the recording.

@@ -63,11 +63,11 @@ events: {
 - `doc` is Markdown the player reads in the inspector. Write it in your company's words. The game is documentation.
 - `key` names the fields that identify the business operation. The idempotency key is the type, `:`, and the JSON of the value, such as `OrderPlaced:"ord-14"`. With several fields it is the JSON array of their values, such as `Transfer:["acct-1","op-7"]`. JSON keeps a value such as `ord-14/Billing.0.0` from spelling a key derived from causation. Declare it on any event an idempotent sink receives, so a retry that re-creates the event dedupes the way your real system does. Without `key`, the engine derives one from causation: the root event's source kind, stream and count, plus `/Kind.recipe.emit` for each machine step, such as `Storefront#0.3/PaymentService.0.0`. Two kinds that handle the same event produce different keys. Two buildings of one kind on two fanout branches produce the same key, because they perform the same operation.
 - `version` (default 1) is stamped on new events. A source payload can override it to mix versions.
-- `color` is optional. The loader picks one from a palette.
+- `color` is optional and is a hex color, `"#f97316"` or `"#f93"`. The loader picks one from a palette when it is missing. The game also gives each event type a silhouette by its position in `events`, so the first five types never differ by color alone.
 
 ## Kinds
 
-Every kind has `archetype`, `title`, `doc`, and an optional one-character `glyph`. A kind's name starts with a letter and uses letters, digits, `_` and `-`. The names `belt`, `any` and `anyExternal` are reserved. Put spaces and punctuation in `title`. Orientation matters for every building. Input is always the back side. `front`, `left` and `right` are relative to the building's facing, so a building facing east has its left side to the north.
+Every kind has `archetype`, `title`, `doc`, an optional one-character `glyph`, and an optional `color` such as `"#f97316"`. The game draws a building from what its kind does (producer, queue, topic, handler, router, external system, dead-letter queue) and colors it to match. Set `color` only when a building should carry a team or system color of its own. A kind's name starts with a letter and uses letters, digits, `_` and `-`. The names `belt`, `any` and `anyExternal` are reserved. Put spaces and punctuation in `title`. Orientation matters for every building. Input is always the back side. `front`, `left` and `right` are relative to the building's facing, so a building facing east has its left side to the north.
 
 ### source
 
@@ -133,6 +133,7 @@ Ledger: { archetype: "sink", accepts: ["PaymentCaptured"], ticksPerEvent: 1, rol
 ```ts
 {
   id: "when-payments-fail", title: "...", brief: "Markdown shown before the level.",
+  debrief: "Markdown shown when the level is won.",
   seed: 3, maxTicks: 900,
   map: ["............", ".S........L.", "............"],
   legend: { S: { kind: "FlakyStorefront", facing: "east" }, L: { kind: "Ledger", facing: "east" } },
@@ -143,6 +144,8 @@ Ledger: { archetype: "sink", accepts: ["PaymentCaptured"], ticksPerEvent: 1, rol
   counterexamples: [{ why: "...", map: [...], legend: {...} }],
 }
 ```
+
+`debrief` is optional. Use it to state the lesson in one or two sentences, in your company's words. The player reads it on the result card right after they win, next to their time and the reference solution's time.
 
 ### Maps
 
