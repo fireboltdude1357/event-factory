@@ -3,7 +3,7 @@
 //
 //   node .agents/skills/verify/scripts/drive.mjs --url http://localhost:5391 --out .verify/runs/<id>/artifacts [--flow all|levels|build|retry|inspect|idle|phone]
 //
-// Connects to WIN_CHROME_CDP when set (stl-wsl), otherwise launches the
+// Connects to the Chrome DevTools endpoint in WIN_CHROME_CDP when set, otherwise launches the
 // local Playwright Chromium.
 import { mkdirSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
