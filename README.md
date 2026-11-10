@@ -41,6 +41,10 @@ More detail is in [`docs/architecture.md`](docs/architecture.md), [`docs/glossar
 | `apps/web` | The React game. It renders whatever pack it is given. |
 | `packs/` | Domain packs. |
 
+## Contributing
+
+This repo does not take contributions. Fork it to make your own changes.
+
 ## License
 
 MIT. See [`LICENSE`](LICENSE).

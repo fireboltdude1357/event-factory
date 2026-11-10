@@ -5,7 +5,7 @@ description: "Run and verify Event Factory (the web game and the pack:check CLI)
 
 # Verify Event Factory
 
-Event Factory is a browser game that renders a domain pack. This skill proves a change two ways. `pnpm pack:check` proves every level of a pack headlessly. `scripts/drive.mjs` plays the real web app through its UI with Playwright, at desktop and phone width, and records screenshots, videos and `results.json`. `scripts/shots.mjs` takes a quick set of screenshots at one viewport with no assertions, for judging a visual change while you work. On stl-wsl the drive connects to Windows Chrome through `win-chrome`, which renders on the GPU. Elsewhere it launches local Playwright Chromium.
+Event Factory is a browser game that renders a domain pack. This skill proves a change two ways. `pnpm pack:check` proves every level of a pack headlessly. `scripts/drive.mjs` plays the real web app through its UI with Playwright, at desktop and phone width, and records screenshots, videos and `results.json`. `scripts/shots.mjs` takes a quick set of screenshots at one viewport with no assertions, for judging a visual change while you work. Both scripts connect to the Chrome DevTools endpoint in `WIN_CHROME_CDP` when it is set, and launch local Playwright Chromium otherwise.
 
 Verification-owned paths (the maintenance pass may edit these, never product code): `.agents/skills/verify/`.
 
@@ -17,7 +17,7 @@ Verification-owned paths (the maintenance pass may edit these, never product cod
 
 ## Run ID and isolation
 
-`scripts/verify-run` (vendored from the fleet `create-verify-skill`) keeps the run's state. Run it from the repo root:
+`scripts/verify-run` keeps the run's state. Run it from the repo root:
 
 ```sh
 vr=.agents/skills/verify/scripts/verify-run
@@ -55,12 +55,11 @@ It passes when the dev server is alive with its recorded start time and is the o
 ## Drive
 
 ```sh
-WC=~/code/fleet/skills/machine/stl-wsl/claude/win-chrome/scripts/win-chrome   # stl-wsl only
-$WC run -- node .agents/skills/verify/scripts/drive.mjs \
+node .agents/skills/verify/scripts/drive.mjs \
   --url http://localhost:<port>/ --out .verify/runs/$run_id/artifacts [--flow all|levels|build|retry|inspect|idle|phone]
 ```
 
-Without `win-chrome`, run the same `node` command directly. The script prints one `pass` or `FAIL` line per step and exits 1 on any failure. The `build`, `retry`, `inspect` and `phone` flows use the example pack's coordinates. Choose `--flow levels` and `--flow idle` for any other pack. Each flow records its own video under `artifacts/video/<flow>/`. Convert one for a PR with `ffmpeg -i artifacts/video/build/*.webm -c:v libx264 -pix_fmt yuv420p artifacts/build.mp4`.
+To render in a Chrome you already run, such as one on a GPU host, set `WIN_CHROME_CDP` to its DevTools endpoint first. The script prints one `pass` or `FAIL` line per step and exits 1 on any failure. The `build`, `retry`, `inspect` and `phone` flows use the example pack's coordinates. Choose `--flow levels` and `--flow idle` for any other pack. Each flow records its own video under `artifacts/video/<flow>/`. Convert one for a PR with `ffmpeg -i artifacts/video/build/*.webm -c:v libx264 -pix_fmt yuv420p artifacts/build.mp4`.
 
 Pick the recipe from `references/features/` for the feature under test.
 
@@ -91,7 +90,7 @@ Write each artifact as a backticked run-relative path such as `` `artifacts/leve
 
 Run it after the last drive and after every failed attempt.
 
-1. `win-chrome run` stops its Chrome itself. If you used `win-chrome start`, run `win-chrome stop <name>`.
+1. If you started a Chrome for `WIN_CHROME_CDP`, stop it.
 2. `$vr cleanup "$run_id" --final` stops the dev server's process group, releases the lock, and fails if an artifact listed in `evidence.md` is missing.
 
 Never kill by name or by port alone. Cleanup never deletes `.verify/runs/<run-id>/`.
