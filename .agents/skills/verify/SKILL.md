@@ -59,7 +59,7 @@ node .agents/skills/verify/scripts/drive.mjs \
   --url http://localhost:<port>/ --out .verify/runs/$run_id/artifacts [--flow all|levels|build|retry|inspect|idle|phone]
 ```
 
-To render in a Chrome you already run, such as one on a GPU host, set `WIN_CHROME_CDP` to its DevTools endpoint first. The script prints one `pass` or `FAIL` line per step and exits 1 on any failure. The `build`, `retry`, `inspect` and `phone` flows use the example pack's coordinates. Choose `--flow levels` and `--flow idle` for any other pack. Each flow records its own video under `artifacts/video/<flow>/`. Convert one for a PR with `ffmpeg -i artifacts/video/build/*.webm -c:v libx264 -pix_fmt yuv420p artifacts/build.mp4`.
+To render in a Chrome you already run, such as one on a GPU host, set `WIN_CHROME_CDP` to its DevTools endpoint first. `--url` must be reachable from that Chrome. For a Chrome on another host, add `--host 0.0.0.0` to the `vite` command in Launch and pass this machine's network address instead of `localhost`. The script prints one `pass` or `FAIL` line per step and exits 1 on any failure. The `build`, `retry`, `inspect` and `phone` flows use the example pack's coordinates. Choose `--flow levels` and `--flow idle` for any other pack. Each flow records its own video under `artifacts/video/<flow>/`. Convert one for a PR with `ffmpeg -i artifacts/video/build/*.webm -c:v libx264 -pix_fmt yuv420p artifacts/build.mp4`.
 
 Pick the recipe from `references/features/` for the feature under test.
 
