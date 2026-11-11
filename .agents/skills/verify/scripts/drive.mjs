@@ -3,12 +3,10 @@
 //
 //   node .agents/skills/verify/scripts/drive.mjs --url http://localhost:5391 --out .verify/runs/<id>/artifacts [--flow all|levels|build|retry|inspect|idle|phone]
 //
-// Connects to the Chrome DevTools endpoint in WIN_CHROME_CDP when set, otherwise launches the
-// local Playwright Chromium.
+// browser.mjs says which browser it drives.
 import { mkdirSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
 import { parseArgs } from "node:util"
-import { chromium } from "playwright-core"
 
 const { values: args } = parseArgs({
   options: {
@@ -22,10 +20,7 @@ const flows = { levels: levelsFlow, build: buildFlow, retry: retryFlow, inspect:
 if (args.flow !== "all" && !Object.hasOwn(flows, args.flow))
   throw new Error(`unknown --flow ${args.flow}; expected all|${Object.keys(flows).join("|")}`)
 mkdirSync(args.out, { recursive: true })
-
-const browser = process.env.WIN_CHROME_CDP
-  ? await chromium.connectOverCDP(process.env.WIN_CHROME_CDP)
-  : await chromium.launch()
+const { browser } = await import("./browser.mjs")
 
 const desktop = { width: 1280, height: 800 }
 const phone = { width: 390, height: 844 }

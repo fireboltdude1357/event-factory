@@ -5,7 +5,6 @@
 import { mkdirSync } from "node:fs"
 import { join } from "node:path"
 import { parseArgs } from "node:util"
-import { chromium } from "playwright-core"
 
 const { values: args } = parseArgs({
   options: {
@@ -21,7 +20,7 @@ mkdirSync(args.out, { recursive: true })
 const viewport = { width: Number(args.width), height: Number(args.height) }
 const tag = String(viewport.width)
 
-const browser = process.env.WIN_CHROME_CDP ? await chromium.connectOverCDP(process.env.WIN_CHROME_CDP) : await chromium.launch()
+const { browser } = await import("./browser.mjs")
 const context = await browser.newContext({ viewport, hasTouch: viewport.width < 600, deviceScaleFactor: viewport.width < 600 ? 2 : 1 })
 const page = await context.newPage()
 page.on("pageerror", (e) => console.log(`pageerror ${e}`))
