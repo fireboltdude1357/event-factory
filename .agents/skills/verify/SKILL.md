@@ -5,7 +5,7 @@ description: "Run and verify Event Factory (the web game and the pack:check CLI)
 
 # Verify Event Factory
 
-Event Factory is a browser game that renders a domain pack. This skill proves a change two ways. `pnpm pack:check` proves every level of a pack headlessly. `scripts/drive.mjs` plays the real web app through its UI with Playwright, at desktop and phone width, and records screenshots, videos and `results.json`. `scripts/shots.mjs` takes a quick set of screenshots at one viewport with no assertions, for judging a visual change while you work. Both scripts connect to the Chrome DevTools endpoint in `WIN_CHROME_CDP` when it is set, and launch local Playwright Chromium otherwise.
+Event Factory is a browser game that renders a domain pack. This skill proves a change two ways. `pnpm pack:check` proves every level of a pack headlessly. `scripts/drive.mjs` plays the real web app through its UI with Playwright, at desktop and phone width, and records screenshots, videos and `results.json`. `scripts/shots.mjs` takes a quick set of screenshots at one viewport with no assertions, for judging a visual change while you work. Both launch the machine's Chromium headless on the GPU through `scripts/browser.mjs`.
 
 Verification-owned paths (the maintenance pass may edit these, never product code): `.agents/skills/verify/`.
 
@@ -59,7 +59,7 @@ node .agents/skills/verify/scripts/drive.mjs \
   --url http://localhost:<port>/ --out .verify/runs/$run_id/artifacts [--flow all|levels|build|retry|inspect|idle|phone]
 ```
 
-To render in a Chrome you already run, such as one on a GPU host, set `WIN_CHROME_CDP` to its DevTools endpoint first. `--url` must load in that Chrome. For a Chrome on another host, forward the port to it with `ssh -N -o ExitOnForwardFailure=yes -R <port>:localhost:<port> <chrome-host>`, started in the background before the drive, and keep `localhost` in `--url`. The script prints one `pass` or `FAIL` line per step and exits 1 on any failure. The `build`, `retry`, `inspect` and `phone` flows use the example pack's coordinates. Choose `--flow levels` and `--flow idle` for any other pack. Each flow records its own video under `artifacts/video/<flow>/`. Convert one for a PR with `ffmpeg -i artifacts/video/build/*.webm -c:v libx264 -pix_fmt yuv420p artifacts/build.mp4`.
+`browser.mjs` launches `/usr/sbin/chromium` (`CHROME_PATH` names another) with `--use-gl=angle --use-angle=gl-egl --ignore-gpu-blocklist`, which put it on the GPU. Without them headless Chromium renders on SwiftShader, its CPU renderer. Extra Chrome flags go in `CHROME_ARGS`, split on spaces. To drive a Chrome you already run, set `WIN_CHROME_CDP` to its DevTools endpoint, and `--url` must load in that Chrome. The script prints one `pass` or `FAIL` line per step and exits 1 on any failure. The `build`, `retry`, `inspect` and `phone` flows use the example pack's coordinates. Choose `--flow levels` and `--flow idle` for any other pack. Each flow records its own video under `artifacts/video/<flow>/`. Convert one for a PR with `ffmpeg -i artifacts/video/build/*.webm -c:v libx264 -pix_fmt yuv420p artifacts/build.mp4`.
 
 Pick the recipe from `references/features/` for the feature under test.
 
@@ -90,7 +90,7 @@ Write each artifact as a backticked run-relative path such as `` `artifacts/leve
 
 Run it after the last drive and after every failed attempt.
 
-1. If you started a Chrome for `WIN_CHROME_CDP` or an `ssh -R` forward, stop them by the PIDs you saved.
+1. If you started a Chrome for `WIN_CHROME_CDP`, stop it by the PID you saved.
 2. `$vr cleanup "$run_id" --final` stops the dev server's process group, releases the lock, and fails if an artifact listed in `evidence.md` is missing.
 
 Never kill by name or by port alone. Cleanup never deletes `.verify/runs/<run-id>/`.
